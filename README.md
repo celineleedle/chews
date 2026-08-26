@@ -7,25 +7,18 @@ area, and everyone swipes through the same deck of nearby restaurants. The momen
 every member has liked the same place, the session ends with a match. If the deck
 runs out first, you get the group's ranked votes instead.
 
-## Stack
-
-- **`web/`** — Vite + React 19 + TypeScript, Tailwind v4, Framer Motion (`motion`) swipe deck, Zustand store
-- **`server/`** — one Fastify 5 process: static hosting, small REST API, WebSockets (`ws`)
-- **`shared/`** — the WS protocol: zod schemas + shared types both sides compile against
-- Rooms are ephemeral and live in server memory (grace-period reconnects, GC'd on expiry)
-- Restaurant data: Google Places Text Search (New) with an in-memory TTL/LRU cache and a
-  server-side photo proxy — the API key never reaches the browser
-- No database. (Optional accounts + history are planned for future updates.)
+Built as an npm-workspaces monorepo: a React web app (`web/`), a Fastify server
+(`server/`), and a shared protocol package (`shared/`).
 
 ## Development
 
 ```bash
 npm install
-npm run dev        # server on :8787, web on :5173 (proxies /api and /ws)
+npm run dev        # server on :8787, web on :5173
 ```
 
-Without a Google API key the app serves a built-in mock deck of 25 restaurants, so the
-full flow works offline. For real data:
+Without a Google API key the app serves a built-in mock deck of 25 restaurants, so
+the full flow works offline. For real data:
 
 ```bash
 cp .env.example .env
@@ -33,28 +26,24 @@ cp .env.example .env
 # set MOCK_PLACES=0
 ```
 
-### Manual multi-user test
+### Trying it out
 
-1. Open http://localhost:5173, enter a name, **Start a room**.
-2. Open an incognito window (it needs its own localStorage), and open
-   the room link or enter the code on **I have a code**.
-3. Start the session from the host tab; both tabs get the same deck.
-4. Like the same restaurant in both → instant match screen with confetti.
-5. Also worth checking: refresh mid-swipe (you resume at the same card), close a tab
-   (after ~60s the member is dropped and thresholds recompute), join with a wrong code
-   (friendly error — no ghost rooms).
+1. Open http://localhost:5173, enter a name, **Start a room**, and allow the
+   location prompt.
+2. In an incognito window, open the
+   room link or enter the code under **I have a code**.
+3. Start the session from the host tab and like the same restaurant in both →
+   match screen with confetti. If nobody agrees, ranked votes appear once
+   everyone finishes the deck.
 
 ### Tests
 
 ```bash
-npm test           # vitest: match logic, room lifecycle, codes, cache + real-WS integration
+npm test           # unit + integration tests
 npm run typecheck  # all three workspaces
 ```
 
-## Production / deploy (Fly.io)
-
-The whole app builds into one container (see `Dockerfile`); the server serves the built
-client with an SPA fallback so `/room/CODE` deep links work.
+## Deploy (Fly.io)
 
 ```bash
 npm run build && npm start          # local prod smoke test on :8787
@@ -64,17 +53,12 @@ fly secrets set GOOGLE_PLACES_API_KEY=... MOCK_PLACES=0
 fly deploy
 ```
 
-**Important:** room state is in process memory, so the app must run as exactly **one**
-machine (`min_machines_running = 1`, autoscaling off — already set in `fly.toml`).
-
-Deploy checklist: `/healthz` returns 200 · two phones can complete a match over WSS ·
-`fly scale show` reports 1 machine · the Places key doesn't appear in `web/dist` ·
-photos load via `/api/photo` (no direct `googleapis.com` requests in the network tab).
+Rooms live in server memory, so the app must run as exactly **one** machine —
+`fly.toml` is already configured for that.
 
 ## Config
 
-All configuration is server-side env (`.env.example`); the client derives API/WS URLs
-from `window.location` and has zero env vars.
+All configuration is server-side env (see `.env.example`); the web client needs none.
 
 | Var | Default | Meaning |
 | --- | --- | --- |
