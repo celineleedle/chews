@@ -1,6 +1,7 @@
 import type { Filters, PlaceReview, Restaurant, RestaurantDetails } from "@chews/shared";
 import { env } from "../env.js";
 import { TtlCache } from "./cache.js";
+import { createByteDiskCache } from "./diskCache.js";
 import { geohash } from "./geohash.js";
 
 const SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
@@ -276,11 +277,21 @@ const PHOTO_NAME_RE = /^places\/[A-Za-z0-9_-]+\/photos\/[A-Za-z0-9_.=-]+$/;
 
 type Photo = { bytes: ArrayBuffer; contentType: string };
 
+// A photo resource name always refers to the same image and a map of a fixed
+// point doesn't change, so both byte caches keep entries for a week.
+const BYTES_TTL_MS = 7 * 24 * 60 * 60_000;
+// Upstream failures (photo gone, Maps Static not enabled on the key) are also
+// cached — briefly — so every open of the same sheet doesn't re-hit Google.
+const NEGATIVE_TTL_MS = 5 * 60_000;
+
 // Every member's browser requests the same deck's photos the moment a session
 // starts, and browser Cache-Control only helps per-client — so cache the bytes
 // (~100KB each) and coalesce concurrent fetches server-side to keep billable
-// Photo Media calls at one per photo. 100 entries ≈ 10MB ≈ 3 active decks.
-const photoCache = new TtlCache<Photo>(24 * 60 * 60_000, 100);
+// Photo Media calls at one per photo. A deck alone is up to 100 photos
+// (5 × 20 cards), so 400 entries ≈ 40MB ≈ 4 active decks; the disk layer
+// catches evictions and restarts.
+const photoCache = new TtlCache<Photo | null>(BYTES_TTL_MS, 400);
+const photoDisk = createByteDiskCache("photos", BYTES_TTL_MS, 2000);
 const photoInflight = new Map<string, Promise<Photo | null>>();
 
 /**
@@ -293,14 +304,25 @@ export function fetchPhoto(name: string, widthPx: number): Promise<Photo | null>
   const key = `${name}:${width}`;
 
   const cached = photoCache.get(key);
-  if (cached) return Promise.resolve(cached);
+  if (cached !== undefined) return Promise.resolve(cached);
   const inflight = photoInflight.get(key);
   if (inflight) return inflight;
 
-  const fetching = fetchPhotoUpstream(name, width).then((photo) => {
-    if (photo) photoCache.set(key, photo);
+  const fetching = (async () => {
+    const onDisk = await photoDisk?.get(key);
+    if (onDisk) {
+      photoCache.set(key, onDisk);
+      return onDisk;
+    }
+    const photo = await fetchPhotoUpstream(name, width);
+    if (photo) {
+      photoCache.set(key, photo);
+      void photoDisk?.set(key, photo);
+    } else {
+      photoCache.set(key, null, NEGATIVE_TTL_MS);
+    }
     return photo;
-  });
+  })();
   photoInflight.set(key, fetching);
   void fetching.finally(() => photoInflight.delete(key));
   return fetching;
@@ -334,7 +356,8 @@ type MapImage = { bytes: ArrayBuffer; contentType: string };
 // Same shape as the photo cache: the whole room opens the same detail sheet, and
 // Maps Static is its own billable SKU, so cache and coalesce hard. A map is
 // keyed by rounded coordinates, so every member's request is one upstream call.
-const mapCache = new TtlCache<MapImage>(24 * 60 * 60_000, 100);
+const mapCache = new TtlCache<MapImage | null>(BYTES_TTL_MS, 200);
+const mapDisk = createByteDiskCache("maps", BYTES_TTL_MS, 1000);
 const mapInflight = new Map<string, Promise<MapImage | null>>();
 
 /**
@@ -353,14 +376,25 @@ export function fetchStaticMap(lat: number, lng: number, widthPx: number): Promi
   const key = `${at}:${width}`;
 
   const cached = mapCache.get(key);
-  if (cached) return Promise.resolve(cached);
+  if (cached !== undefined) return Promise.resolve(cached);
   const inflight = mapInflight.get(key);
   if (inflight) return inflight;
 
-  const fetching = fetchStaticMapUpstream(at, width, height).then((image) => {
-    if (image) mapCache.set(key, image);
+  const fetching = (async () => {
+    const onDisk = await mapDisk?.get(key);
+    if (onDisk) {
+      mapCache.set(key, onDisk);
+      return onDisk;
+    }
+    const image = await fetchStaticMapUpstream(at, width, height);
+    if (image) {
+      mapCache.set(key, image);
+      void mapDisk?.set(key, image);
+    } else {
+      mapCache.set(key, null, NEGATIVE_TTL_MS);
+    }
     return image;
-  });
+  })();
   mapInflight.set(key, fetching);
   void fetching.finally(() => mapInflight.delete(key));
   return fetching;

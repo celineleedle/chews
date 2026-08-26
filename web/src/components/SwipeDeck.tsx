@@ -159,6 +159,11 @@ function TopCard({
   // Scrolling the details is only enabled at full rest: an active scroll
   // container mid-gesture swallows the drag that is still driving the height.
   const [scrollable, setScrollable] = useState(false);
+  // The details are mounted (clipped) from the start, so without a gate their
+  // map + gallery images would fetch for every card that reaches the top —
+  // billable Google calls for sheets nobody opens. Latched on the first
+  // expansion gesture; the images beat the spring, so nothing pops.
+  const [revealed, setRevealed] = useState(false);
   const measured = collapsedH > 0 && expandedH > collapsedH;
   const restH = measured ? collapsedH : 1;
   const fullH = measured ? expandedH : 2;
@@ -248,6 +253,7 @@ function TopCard({
 
   function expand() {
     const mine = ++gen.current;
+    setRevealed(true);
     setExpanded(true);
     heightAnim.current?.stop();
     heightAnim.current = animate(cardHeight, fullH, {
@@ -342,7 +348,12 @@ function TopCard({
       dragListener={!expanded}
       dragControls={dragControls}
       dragDirectionLock={!expanded}
-      onDirectionLock={(lockedAxis) => (axis.current = lockedAxis)}
+      onDirectionLock={(lockedAxis) => {
+        axis.current = lockedAxis;
+        // A vertical pull means the details are about to show — start the
+        // images now, while the finger is still mid-gesture.
+        if (lockedAxis === "y") setRevealed(true);
+      }}
       dragSnapToOrigin
       // y is pinned at both ends with zero elastic: vertical travel is consumed
       // by the height, so the card must never translate. While disconnected the
@@ -432,7 +443,7 @@ function TopCard({
             : "overflow-hidden"
         }`}
       >
-        <RestaurantDetails restaurant={restaurant} onCollapse={collapse} />
+        <RestaurantDetails restaurant={restaurant} onCollapse={collapse} showImages={revealed} />
       </div>
     </motion.div>
   );

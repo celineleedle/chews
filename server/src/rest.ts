@@ -34,15 +34,24 @@ export function registerRest(app: FastifyInstance, manager: RoomManager) {
       : { exists: false, status: null, joinable: false };
   });
 
+  // Both image proxies are keyed by immutable inputs (a photo resource name, a
+  // rounded lat/lng), so returning browsers can keep them for a month. Misses
+  // are cacheable too — briefly — so a key without Maps Static enabled doesn't
+  // get hammered on every sheet open.
+  const IMAGE_CACHE = "public, max-age=2592000, immutable";
+  const MISS_CACHE = "public, max-age=300";
+
   // Server-side photo proxy: the Google API key never reaches the browser.
   app.get<{ Querystring: { name?: string; w?: string } }>("/api/photo", async (req, reply) => {
     const { name, w } = req.query;
     if (!name) return reply.code(400).send({ error: "missing name" });
     const photo = await fetchPhoto(name, Number(w ?? 800));
-    if (!photo) return reply.code(404).send({ error: "photo unavailable" });
+    if (!photo) {
+      return reply.code(404).header("Cache-Control", MISS_CACHE).send({ error: "photo unavailable" });
+    }
     return reply
       .header("Content-Type", photo.contentType)
-      .header("Cache-Control", "public, max-age=86400, immutable")
+      .header("Cache-Control", IMAGE_CACHE)
       .send(Buffer.from(photo.bytes));
   });
 
@@ -53,10 +62,12 @@ export function registerRest(app: FastifyInstance, manager: RoomManager) {
       const { lat, lng, w } = req.query;
       if (lat == null || lng == null) return reply.code(400).send({ error: "missing lat/lng" });
       const image = await fetchStaticMap(Number(lat), Number(lng), Number(w ?? 640));
-      if (!image) return reply.code(404).send({ error: "map unavailable" });
+      if (!image) {
+        return reply.code(404).header("Cache-Control", MISS_CACHE).send({ error: "map unavailable" });
+      }
       return reply
         .header("Content-Type", image.contentType)
-        .header("Cache-Control", "public, max-age=86400, immutable")
+        .header("Cache-Control", IMAGE_CACHE)
         .send(Buffer.from(image.bytes));
     },
   );

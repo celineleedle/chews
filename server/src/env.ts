@@ -16,6 +16,9 @@ const EnvSchema = z.object({
   GOOGLE_PLACES_API_KEY: z.string().default(""),
   MOCK_PLACES: z.string().default("0"),
   PLACES_CACHE_TTL_MIN: z.coerce.number().positive().default(45),
+  // Where photo/static-map bytes persist across restarts. "" = a default under
+  // the OS temp dir; "0" disables disk caching entirely.
+  BYTE_CACHE_DIR: z.string().default(""),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
