@@ -1,0 +1,33 @@
+# flyctl launch added from .gitignore
+# Dependencies
+**/node_modules
+
+# Build output
+**/dist
+**/*.tsbuildinfo
+
+# Environment — .env.example is tracked; real values never are
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Runtime data (future SQLite match history lives here)
+**/data
+
+# Logs
+**/*.log
+**/npm-debug.log*
+
+# Test output
+**/coverage
+
+# Claude Code local settings
+**/.claude/settings.local.json
+
+# Editors
+**/.vscode
+**/.idea
+
+# OS
+**/.DS_Store
+fly.toml
