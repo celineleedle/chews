@@ -28,11 +28,22 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function LocationPreview({ lat, lng, name }: { lat: number; lng: number; name: string }) {
+function LocationPreview({
+  lat,
+  lng,
+  name,
+  show,
+}: {
+  lat: number;
+  lng: number;
+  name: string;
+  show: boolean;
+}) {
   const [failed, setFailed] = useState(false);
   // The server returns 404 when Maps Static isn't enabled on the key — that's a
   // card without a map, not a broken card.
   if (failed) return null;
+  if (!show) return <div aria-hidden className="h-40 w-full rounded-2xl bg-ink/5" />;
   return (
     <img
       src={`/api/staticmap?lat=${lat}&lng=${lng}&w=640`}
@@ -52,10 +63,17 @@ export default function RestaurantDetails({
   restaurant,
   onCollapse,
   collapseLabel = "Back to swiping",
+  showImages = true,
 }: {
   restaurant: Restaurant;
   onCollapse: () => void;
   collapseLabel?: string;
+  /**
+   * When the details are mounted but hidden (the clipped swipe card), the map
+   * and gallery hold their layout with placeholders instead of fetching —
+   * every image here is a billable Google call.
+   */
+  showImages?: boolean;
 }) {
   const details = restaurant.details ?? null;
   // Today's line gets emphasised in the hours list. Places starts its week on
@@ -132,7 +150,12 @@ export default function RestaurantDetails({
       </div>
 
       {details?.lat != null && details.lng != null && (
-        <LocationPreview lat={details.lat} lng={details.lng} name={restaurant.name} />
+        <LocationPreview
+          lat={details.lat}
+          lng={details.lng}
+          name={restaurant.name}
+          show={showImages}
+        />
       )}
 
       {services.length > 0 && (
@@ -153,15 +176,19 @@ export default function RestaurantDetails({
       {details && details.photoUrls.length > 0 && (
         <Section title="Photos">
           <div className="-mx-5 flex gap-2 overflow-x-auto px-5 pb-1">
-            {details.photoUrls.map((url) => (
-              <img
-                key={url}
-                src={url}
-                alt=""
-                loading="lazy"
-                className="h-32 w-44 shrink-0 rounded-2xl object-cover"
-              />
-            ))}
+            {details.photoUrls.map((url) =>
+              showImages ? (
+                <img
+                  key={url}
+                  src={url}
+                  alt=""
+                  loading="lazy"
+                  className="h-32 w-44 shrink-0 rounded-2xl object-cover"
+                />
+              ) : (
+                <div key={url} aria-hidden className="h-32 w-44 shrink-0 rounded-2xl bg-ink/5" />
+              ),
+            )}
           </div>
         </Section>
       )}

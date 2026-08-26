@@ -20,9 +20,10 @@ export class TtlCache<V> {
     return entry.value;
   }
 
-  set(key: string, value: V) {
+  /** `ttlMs` overrides the cache-wide TTL for this entry (e.g. short-lived negative entries). */
+  set(key: string, value: V, ttlMs = this.ttlMs) {
     if (this.entries.has(key)) this.entries.delete(key);
-    this.entries.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+    this.entries.set(key, { value, expiresAt: Date.now() + ttlMs });
     while (this.entries.size > this.maxEntries) {
       const oldest = this.entries.keys().next().value;
       if (oldest === undefined) break;

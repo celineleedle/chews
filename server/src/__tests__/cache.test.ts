@@ -24,6 +24,14 @@ describe("TtlCache", () => {
     expect(cache.get("b")).toBeUndefined();
     expect(cache.get("c")).toBe(3);
   });
+
+  it("honors a per-entry TTL override, and stores null as a hit", () => {
+    const cache = new TtlCache<string | null>(60_000, 10);
+    cache.set("miss", null, 1000); // negative entry, short-lived
+    expect(cache.get("miss")).toBeNull();
+    vi.advanceTimersByTime(1001);
+    expect(cache.get("miss")).toBeUndefined();
+  });
 });
 
 describe("geohash", () => {
