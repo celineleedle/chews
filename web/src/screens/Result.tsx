@@ -47,8 +47,13 @@ export default function Result() {
 
       {matched ? (
         <>
-          <div className="aspect-[3/4] h-[46dvh] max-w-full self-center">
-            <RestaurantCard restaurant={result.winner} />
+          {/* The outer box owns the height so the flex column never has to derive a
+              flex item's main size from aspect-ratio (WebKit gets that wrong and lets
+              the card paint over the backup plans below it — see #3). */}
+          <div className="flex h-[46dvh] shrink-0 justify-center">
+            <div className="aspect-[3/4] h-full max-w-full">
+              <RestaurantCard restaurant={result.winner} />
+            </div>
           </div>
           {result.winner.mapsUrl && (
             <a
