@@ -47,7 +47,7 @@ export default function Result() {
 
       {matched ? (
         <>
-          <div className="aspect-[3/4] max-h-[46dvh] w-full self-center">
+          <div className="aspect-[3/4] h-[46dvh] max-w-full self-center">
             <RestaurantCard restaurant={result.winner} />
           </div>
           {result.winner.mapsUrl && (
