@@ -9,6 +9,9 @@ export default function Swipe() {
   const progressIndex = useRoomStore((s) => s.progressIndex);
   const progress = useRoomStore((s) => s.progress);
   const recordLocalSwipe = useRoomStore((s) => s.recordLocalSwipe);
+  // While the socket is down a swipe would be silently dropped — lock the deck
+  // (elastic drag, no fling) until we're connected again.
+  const connection = useRoomStore((s) => s.connection);
 
   const done = progressIndex >= deck.length;
   const waitingOn = progress.totalCount - progress.doneCount;
@@ -54,7 +57,12 @@ export default function Swipe() {
         </div>
       ) : (
         <div className="min-h-0 flex-1 pb-1">
-          <SwipeDeck deck={deck} index={progressIndex} onSwipe={handleSwipe} />
+          <SwipeDeck
+            deck={deck}
+            index={progressIndex}
+            onSwipe={handleSwipe}
+            disabled={connection !== "open"}
+          />
         </div>
       )}
     </Screen>
