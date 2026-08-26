@@ -29,6 +29,22 @@ const DATA: Array<[string, string, number, number]> = [
   ["Midnight Diner 24", "Diner", 1, 4.1],
 ];
 
+const HOURS = [
+  "Monday: 11:00 AM – 10:00 PM",
+  "Tuesday: 11:00 AM – 10:00 PM",
+  "Wednesday: 11:00 AM – 10:00 PM",
+  "Thursday: 11:00 AM – 11:00 PM",
+  "Friday: 11:00 AM – 12:00 AM",
+  "Saturday: 10:00 AM – 12:00 AM",
+  "Sunday: 10:00 AM – 9:00 PM",
+];
+
+const REVIEW_TEXT = [
+  "Came here with four friends and we all ordered something different — not a dud in the bunch. The service was quick even with a full room.",
+  "Solid neighbourhood spot. Portions are generous and the staff actually remember you the second time around.",
+  "Worth the wait. Get there before 7 or plan on standing outside for twenty minutes.",
+];
+
 export const MOCK_RESTAURANTS: Restaurant[] = DATA.map(([name, category, priceLevel, rating], i) => ({
   placeId: `mock-${i + 1}`,
   name,
@@ -40,6 +56,32 @@ export const MOCK_RESTAURANTS: Restaurant[] = DATA.map(([name, category, priceLe
   photoUrl: `https://picsum.photos/seed/chews-${i + 1}/800/1000`,
   mapsUrl: null,
   openNow: true,
+  details: {
+    websiteUrl: `https://example.com/${name.toLowerCase().replace(/[^a-z]+/g, "-")}`,
+    phone: `(555) ${String(100 + i).padStart(3, "0")}-${String(1000 + i * 7).slice(0, 4)}`,
+    hours: HOURS,
+    priceRange: ["$5–15", "$10–20", "$25–40", "$50–80"][priceLevel - 1] ?? null,
+    // Scattered around downtown Chicago so the map preview has something to show.
+    lat: 41.8827 + ((i % 5) - 2) * 0.004,
+    lng: -87.6233 + ((i % 7) - 3) * 0.004,
+    summary: `${category} spot known for its ${rating >= 4.5 ? "famously good" : "reliably good"} ${category.toLowerCase()}.`,
+    cuisines: [category, i % 2 === 0 ? "Casual Dining" : "Family Friendly"],
+    serves: {
+      dineIn: true,
+      takeout: i % 3 !== 0,
+      delivery: i % 2 === 0,
+      vegetarian: i % 4 !== 0,
+      outdoorSeating: i % 5 === 0,
+      reservable: priceLevel >= 3,
+    },
+    reviews: REVIEW_TEXT.slice(0, (i % 3) + 1).map((text, j) => ({
+      author: ["Jordan P.", "Riley M.", "Sam K."][j]!,
+      rating: j === 0 ? 5 : 4,
+      text,
+      relativeTime: ["2 weeks ago", "a month ago", "3 months ago"][j]!,
+    })),
+    photoUrls: [1, 2, 3].map((n) => `https://picsum.photos/seed/chews-${i + 1}-${n}/800/600`),
+  },
 }));
 
 export async function mockDeck(filters: Filters): Promise<Restaurant[]> {
