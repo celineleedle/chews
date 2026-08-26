@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import type { RankedResult } from "@chews/shared";
 import { useRoomStore } from "../store/roomStore";
+import { restaurantSubtitle } from "../lib/format";
 import Confetti from "../components/Confetti";
 import RestaurantCard from "../components/RestaurantCard";
 import { PrimaryButton, Screen } from "../components/ui";
@@ -12,9 +13,7 @@ function RankedRow({ item, rank }: { item: RankedResult; rank: number }) {
       <span className="w-6 text-center font-display text-lg font-bold text-ink-soft">{rank}</span>
       <div className="min-w-0 flex-1">
         <div className="truncate font-semibold text-ink">{r.name}</div>
-        <div className="truncate text-sm text-ink-soft">
-          {[r.category, r.priceLevel ? "$".repeat(r.priceLevel) : null].filter(Boolean).join(" · ")}
-        </div>
+        <div className="truncate text-sm text-ink-soft">{restaurantSubtitle(r)}</div>
       </div>
       <span className="shrink-0 rounded-full bg-leaf/10 px-3 py-1 text-sm font-bold text-leaf-deep">
         {item.likeCount} ♥
@@ -29,7 +28,7 @@ export default function Result() {
   const members = useRoomStore((s) => s.members);
 
   if (!result) return null;
-  const matched = result.kind === "matched" && result.winner;
+  const matched = result.kind === "matched";
 
   return (
     <Screen className="gap-5">
@@ -49,11 +48,11 @@ export default function Result() {
       {matched ? (
         <>
           <div className="aspect-[3/4] max-h-[46dvh] w-full self-center">
-            <RestaurantCard restaurant={result.winner!} />
+            <RestaurantCard restaurant={result.winner} />
           </div>
-          {result.winner!.mapsUrl && (
+          {result.winner.mapsUrl && (
             <a
-              href={result.winner!.mapsUrl}
+              href={result.winner.mapsUrl}
               target="_blank"
               rel="noreferrer"
               className="text-center font-semibold text-primary-deep underline underline-offset-4"

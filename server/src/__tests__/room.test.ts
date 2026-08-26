@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Restaurant, ServerMessage } from "@chews/shared";
+import { DEFAULT_FILTERS, type Restaurant, type ServerMessage } from "@chews/shared";
 import { DISCONNECT_GRACE_MS, Room, type RoomSocket } from "../rooms/room.js";
 
 class FakeSocket implements RoomSocket {
@@ -47,6 +47,12 @@ function joinAs(room: Room, name: string, clientId = `client-${name}-${clientSeq
   return { socket, memberId: result.memberId, clientId };
 }
 
+/** Starting requires a location, so set one first — like the real host flow. */
+function startAs(room: Room, hostId: string) {
+  room.setFilters(hostId, { ...DEFAULT_FILTERS, lat: 37.77, lng: -122.42 });
+  return room.start(hostId);
+}
+
 describe("Room", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -68,7 +74,7 @@ describe("Room", () => {
     const room = makeRoom();
     const host = joinAs(room, "Host");
     joinAs(room, "Pal");
-    expect(await room.start(host.memberId)).toBeNull();
+    expect(await startAs(room, host.memberId)).toBeNull();
 
     const result = room.join(new FakeSocket(), { clientId: "late", displayName: "Late" });
     expect(result).toMatchObject({ ok: false, code: "SESSION_IN_PROGRESS" });
@@ -86,7 +92,7 @@ describe("Room", () => {
     const host = joinAs(room, "Host");
     const pal = joinAs(room, "Pal");
     const token = pal.socket.last("joined")!.resumeToken;
-    await room.start(host.memberId);
+    await startAs(room, host.memberId);
 
     room.swipe(pal.memberId, "a", true);
     room.handleDisconnect(pal.memberId, pal.socket);
@@ -112,7 +118,7 @@ describe("Room", () => {
     const room = makeRoom();
     const host = joinAs(room, "Host");
     const pal = joinAs(room, "Pal");
-    await room.start(host.memberId);
+    await startAs(room, host.memberId);
 
     room.swipe(host.memberId, "a", true);
     room.swipe(host.memberId, "b", true);
@@ -130,7 +136,7 @@ describe("Room", () => {
     const room = makeRoom();
     const host = joinAs(room, "Host");
     const pal = joinAs(room, "Pal");
-    await room.start(host.memberId);
+    await startAs(room, host.memberId);
 
     room.swipe(host.memberId, "a", true);
     room.swipe(host.memberId, "a", true);
@@ -144,7 +150,7 @@ describe("Room", () => {
     const host = joinAs(room, "Host");
     const pal = joinAs(room, "Pal");
     const third = joinAs(room, "Third");
-    await room.start(host.memberId);
+    await startAs(room, host.memberId);
 
     room.swipe(host.memberId, "a", true);
     room.swipe(pal.memberId, "a", true);
@@ -162,7 +168,7 @@ describe("Room", () => {
     const host = joinAs(room, "Host");
     const pal = joinAs(room, "Pal");
     const tri = joinAs(room, "Tri");
-    await room.start(host.memberId);
+    await startAs(room, host.memberId);
 
     room.swipe(host.memberId, "a", false);
     room.swipe(host.memberId, "b", true);
@@ -183,7 +189,7 @@ describe("Room", () => {
     const room = makeRoom();
     const host = joinAs(room, "Host");
     const pal = joinAs(room, "Pal");
-    await room.start(host.memberId);
+    await startAs(room, host.memberId);
     room.leave(pal.memberId);
 
     room.swipe(host.memberId, "a", true);

@@ -1,5 +1,7 @@
 import { useState } from "react";
 import type { Restaurant } from "@chews/shared";
+import { hashPick } from "../lib/hash";
+import { restaurantSubtitle } from "../lib/format";
 
 const FALLBACKS = [
   ["#ff8a65", "#ffb74d", "🍕"],
@@ -10,15 +12,9 @@ const FALLBACKS = [
   ["#ffb74d", "#ffd166", "🥘"],
 ] as const;
 
-function fallbackFor(id: string) {
-  let hash = 0;
-  for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
-  return FALLBACKS[Math.abs(hash) % FALLBACKS.length]!;
-}
-
 export default function RestaurantCard({ restaurant }: { restaurant: Restaurant }) {
   const [imgFailed, setImgFailed] = useState(false);
-  const [from, to, emoji] = fallbackFor(restaurant.placeId);
+  const [from, to, emoji] = hashPick(restaurant.placeId, FALLBACKS);
   const showPhoto = restaurant.photoUrl && !imgFailed;
 
   return (
@@ -42,11 +38,7 @@ export default function RestaurantCard({ restaurant }: { restaurant: Restaurant 
 
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-5 pt-16 pb-5 text-white">
         <h3 className="font-display text-3xl font-black leading-tight">{restaurant.name}</h3>
-        <p className="mt-1 text-sm font-medium text-white/85">
-          {[restaurant.category, restaurant.priceLevel ? "$".repeat(restaurant.priceLevel) : null]
-            .filter(Boolean)
-            .join(" · ")}
-        </p>
+        <p className="mt-1 text-sm font-medium text-white/85">{restaurantSubtitle(restaurant)}</p>
         <div className="mt-1.5 flex items-center gap-3 text-sm text-white/75">
           {restaurant.rating != null && (
             <span>

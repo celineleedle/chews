@@ -132,16 +132,39 @@ export async function placesDeck(filters: Filters): Promise<Restaurant[]> {
 
 const PHOTO_NAME_RE = /^places\/[A-Za-z0-9_-]+\/photos\/[A-Za-z0-9_.=-]+$/;
 
+type Photo = { bytes: ArrayBuffer; contentType: string };
+
+// Every member's browser requests the same deck's photos the moment a session
+// starts, and browser Cache-Control only helps per-client — so cache the bytes
+// (~100KB each) and coalesce concurrent fetches server-side to keep billable
+// Photo Media calls at one per photo. 100 entries ≈ 10MB ≈ 3 active decks.
+const photoCache = new TtlCache<Photo>(24 * 60 * 60_000, 100);
+const photoInflight = new Map<string, Promise<Photo | null>>();
+
 /**
  * Fetches a Places photo server-side so the API key never reaches the browser.
  * Returns null for invalid names or upstream failures.
  */
-export async function fetchPhoto(
-  name: string,
-  widthPx: number,
-): Promise<{ bytes: ArrayBuffer; contentType: string } | null> {
-  if (!PHOTO_NAME_RE.test(name)) return null;
+export function fetchPhoto(name: string, widthPx: number): Promise<Photo | null> {
+  if (!PHOTO_NAME_RE.test(name)) return Promise.resolve(null);
   const width = Math.min(Math.max(Math.round(widthPx) || 800, 100), 1600);
+  const key = `${name}:${width}`;
+
+  const cached = photoCache.get(key);
+  if (cached) return Promise.resolve(cached);
+  const inflight = photoInflight.get(key);
+  if (inflight) return inflight;
+
+  const fetching = fetchPhotoUpstream(name, width).then((photo) => {
+    if (photo) photoCache.set(key, photo);
+    return photo;
+  });
+  photoInflight.set(key, fetching);
+  void fetching.finally(() => photoInflight.delete(key));
+  return fetching;
+}
+
+async function fetchPhotoUpstream(name: string, width: number): Promise<Photo | null> {
   try {
     const res = await fetch(
       `https://places.googleapis.com/v1/${name}/media?maxWidthPx=${width}`,

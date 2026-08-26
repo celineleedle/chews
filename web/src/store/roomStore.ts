@@ -13,8 +13,6 @@ import { saveResumeToken } from "../lib/identity";
 
 export type ConnectionState = "idle" | "connecting" | "open" | "reconnecting";
 
-const FATAL_CODES: ErrorCode[] = ["ROOM_NOT_FOUND", "SESSION_IN_PROGRESS", "ROOM_FULL", "NAME_REQUIRED"];
-
 interface RoomStore {
   connection: ConnectionState;
   roomCode: string | null;
@@ -29,10 +27,13 @@ interface RoomStore {
   result: MatchResult | null;
   fatalError: { code: ErrorCode; message: string } | null;
   toast: string | null;
+  /** start_session sent, no session_started/error back yet. */
+  pendingStart: boolean;
 
   setConnection: (c: ConnectionState) => void;
   handleServerMessage: (msg: ServerMessage) => void;
   recordLocalSwipe: () => void;
+  markStartPending: () => void;
   showToast: (text: string) => void;
   reset: () => void;
 }
@@ -51,6 +52,7 @@ const initial = {
   result: null,
   fatalError: null,
   toast: null,
+  pendingStart: false,
 };
 
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -76,6 +78,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
           progress: msg.room.progress,
           result: msg.room.result,
           fatalError: null,
+          pendingStart: false,
         });
         break;
       }
@@ -83,13 +86,15 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         set({ members: msg.members, hostId: msg.hostId, filters: msg.filters });
         break;
       case "session_started":
-        set((s) => ({
+        set({
           status: "swiping",
           deck: msg.deck,
+          members: msg.members,
           progressIndex: 0,
           result: null,
-          progress: { doneCount: 0, totalCount: s.members.length },
-        }));
+          progress: msg.progress,
+          pendingStart: false,
+        });
         break;
       case "progress":
         set({ progress: { doneCount: msg.doneCount, totalCount: msg.totalCount } });
@@ -101,7 +106,8 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         set({ status: "finished", result: { kind: "finished", winner: null, ranked: msg.ranked } });
         break;
       case "error": {
-        if (FATAL_CODES.includes(msg.code)) {
+        set({ pendingStart: false });
+        if (msg.fatal) {
           set({ fatalError: { code: msg.code, message: msg.message } });
         } else {
           get().showToast(msg.message);
@@ -112,6 +118,8 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   },
 
   recordLocalSwipe: () => set((s) => ({ progressIndex: s.progressIndex + 1 })),
+
+  markStartPending: () => set({ pendingStart: true }),
 
   showToast: (text) => {
     if (toastTimer) clearTimeout(toastTimer);

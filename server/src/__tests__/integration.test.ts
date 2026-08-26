@@ -1,9 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import type { FastifyInstance } from "fastify";
-import type { ServerMessage } from "@chews/shared";
+import { DEFAULT_FILTERS, type ServerMessage } from "@chews/shared";
 import { buildApp } from "../app.js";
 import { MOCK_RESTAURANTS } from "../places/mock.js";
+
+// Starting requires the host's location on the filters.
+const LOCATED_FILTERS = { ...DEFAULT_FILTERS, lat: 37.77, lng: -122.42 };
 
 let app: FastifyInstance;
 let baseUrl: string;
@@ -91,6 +94,7 @@ describe("end-to-end room flow over real websockets", () => {
     ben.send({ type: "start_session" });
     expect((await ben.waitFor("error")).code).toBe("NOT_HOST");
 
+    ana.send({ type: "set_filters", filters: LOCATED_FILTERS });
     ana.send({ type: "start_session" });
     const [deckA, deckB, deckC] = await Promise.all([
       ana.waitFor("session_started"),
@@ -130,6 +134,7 @@ describe("end-to-end room flow over real websockets", () => {
     pal.send({ type: "join", roomCode: code, clientId: "client-pal-00002", displayName: "Pal" });
     const palJoined = await pal.waitFor("joined");
 
+    host.send({ type: "set_filters", filters: LOCATED_FILTERS });
     host.send({ type: "start_session" });
     const { deck } = await pal.waitFor("session_started");
 

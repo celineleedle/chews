@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { CODE_LENGTH, normalizeCode } from "@chews/shared";
 import { checkRoom } from "../lib/api";
 import { Logo, PrimaryButton, Screen, TextField } from "../components/ui";
 
@@ -9,21 +10,25 @@ export default function Join() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const cleaned = code.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const cleaned = normalizeCode(code);
 
   async function join() {
-    if (cleaned.length < 5 || busy) return;
+    if (cleaned.length < CODE_LENGTH || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const { exists, status } = await checkRoom(cleaned);
+      const { exists, status, joinable } = await checkRoom(cleaned);
       if (!exists) {
         setError("Hmm, that room doesn't exist. Double-check the code?");
         setBusy(false);
         return;
       }
-      if (status === "swiping") {
-        setError("That crew already started swiping — ask them to start a new room.");
+      if (!joinable) {
+        setError(
+          status === "lobby"
+            ? "That room is full — ask them to start another one."
+            : "That crew already started swiping — ask them to start a new room.",
+        );
         setBusy(false);
         return;
       }
@@ -47,7 +52,7 @@ export default function Join() {
         <h1 className="text-center font-display text-3xl font-black text-ink">Join a room</h1>
         <p className="text-center text-ink-soft">Type the 5-letter code your friend shared.</p>
         <TextField value={code} onChange={setCode} placeholder="ABCDE" maxLength={7} autoFocus center />
-        <PrimaryButton type="submit" disabled={cleaned.length < 5 || busy}>
+        <PrimaryButton type="submit" disabled={cleaned.length < CODE_LENGTH || busy}>
           {busy ? "Checking…" : "Join"}
         </PrimaryButton>
         {error && <p className="text-center text-sm font-medium text-primary-deep">{error}</p>}

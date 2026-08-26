@@ -9,6 +9,10 @@ export function registerRest(app: FastifyInstance, manager: RoomManager) {
 
   app.post("/api/rooms", async (req, reply) => {
     const now = Date.now();
+    // Drop expired entries wholesale so the map stays bounded by IPs seen in the last minute.
+    for (const [ip, all] of recentCreates) {
+      if (all.every((t) => now - t >= 60_000)) recentCreates.delete(ip);
+    }
     const stamps = (recentCreates.get(req.ip) ?? []).filter((t) => now - t < 60_000);
     if (stamps.length >= CREATES_PER_MINUTE_PER_IP) {
       return reply.code(429).send({ error: "Slow down — too many rooms created." });
@@ -25,7 +29,9 @@ export function registerRest(app: FastifyInstance, manager: RoomManager) {
 
   app.get<{ Params: { code: string } }>("/api/rooms/:code", async (req) => {
     const room = manager.get(req.params.code);
-    return room ? { exists: true, status: room.getStatus() } : { exists: false, status: null };
+    return room
+      ? { exists: true, status: room.getStatus(), joinable: room.isJoinable() }
+      : { exists: false, status: null, joinable: false };
   });
 
   // Server-side photo proxy: the Google API key never reaches the browser.

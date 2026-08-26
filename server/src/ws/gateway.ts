@@ -18,7 +18,7 @@ export function registerGateway(app: FastifyInstance, manager: RoomManager) {
       try {
         msg = ClientMessageSchema.parse(JSON.parse(raw.toString()));
       } catch {
-        send(socket, { type: "error", code: "BAD_MESSAGE", message: "Unrecognized message." });
+        send(socket, { type: "error", code: "BAD_MESSAGE", message: "Unrecognized message.", fatal: false });
         return;
       }
 
@@ -30,6 +30,7 @@ export function registerGateway(app: FastifyInstance, manager: RoomManager) {
             type: "error",
             code: "ROOM_NOT_FOUND",
             message: "That room doesn't exist — double-check the code.",
+            fatal: true,
           });
           return;
         }
@@ -38,25 +39,26 @@ export function registerGateway(app: FastifyInstance, manager: RoomManager) {
           room = target;
           memberId = result.memberId;
         } else {
-          send(socket, { type: "error", code: result.code, message: result.message });
+          // A rejected join would only repeat on reconnect.
+          send(socket, { type: "error", code: result.code, message: result.message, fatal: true });
         }
         return;
       }
 
       if (!room || !memberId) {
-        send(socket, { type: "error", code: "BAD_STATE", message: "Join a room first." });
+        send(socket, { type: "error", code: "BAD_STATE", message: "Join a room first.", fatal: false });
         return;
       }
 
       switch (msg.type) {
         case "set_filters": {
           const err = room.setFilters(memberId, msg.filters);
-          if (err) send(socket, { type: "error", code: err, message: "Only the host can change filters in the lobby." });
+          if (err) send(socket, { type: "error", code: err.code, message: err.message, fatal: false });
           break;
         }
         case "start_session": {
           const err = await room.start(memberId);
-          if (err) send(socket, { type: "error", code: err.code, message: err.message });
+          if (err) send(socket, { type: "error", code: err.code, message: err.message, fatal: false });
           break;
         }
         case "swipe":

@@ -38,12 +38,10 @@ export interface RankedResult {
   passCount: number;
 }
 
-export interface MatchResult {
-  kind: "matched" | "finished";
-  /** The unanimous winner; null when the deck ran out without one */
-  winner: Restaurant | null;
-  ranked: RankedResult[];
-}
+export type MatchResult =
+  | { kind: "matched"; winner: Restaurant; ranked: RankedResult[] }
+  /** The deck ran out without a unanimous winner */
+  | { kind: "finished"; winner: null; ranked: RankedResult[] };
 
 export interface RoomSnapshot {
   code: string;

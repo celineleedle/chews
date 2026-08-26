@@ -10,8 +10,10 @@ export async function createRoom(): Promise<string> {
   return code;
 }
 
-export async function checkRoom(code: string): Promise<{ exists: boolean; status: RoomStatus | null }> {
+export async function checkRoom(
+  code: string,
+): Promise<{ exists: boolean; status: RoomStatus | null; joinable: boolean }> {
   const res = await fetch(`/api/rooms/${encodeURIComponent(code)}`);
   if (!res.ok) throw new Error("Couldn't reach the server.");
-  return (await res.json()) as { exists: boolean; status: RoomStatus | null };
+  return (await res.json()) as { exists: boolean; status: RoomStatus | null; joinable: boolean };
 }

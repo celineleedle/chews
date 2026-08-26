@@ -58,10 +58,17 @@ export type ErrorCode =
 export type ServerMessage =
   | { type: "joined"; memberId: string; resumeToken: string; room: RoomSnapshot }
   | { type: "room_update"; members: MemberInfo[]; hostId: string; filters: Filters }
-  | { type: "session_started"; deck: Restaurant[] }
+  /** Carries the post-prune member list so the client never reconstructs it. */
+  | {
+      type: "session_started";
+      deck: Restaurant[];
+      members: MemberInfo[];
+      progress: { doneCount: number; totalCount: number };
+    }
   | { type: "progress"; doneCount: number; totalCount: number }
   | { type: "matched"; winner: Restaurant; ranked: RankedResult[] }
   | { type: "finished"; ranked: RankedResult[] }
-  | { type: "error"; code: ErrorCode; message: string };
+  /** fatal: joining again would just repeat the error — don't reconnect. */
+  | { type: "error"; code: ErrorCode; message: string; fatal: boolean };
 
 export type { Filters, MatchResult, MemberInfo, RankedResult, Restaurant, RoomSnapshot };

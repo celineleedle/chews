@@ -30,10 +30,9 @@ interface Member {
   name: string;
   resumeToken: string;
   joinSeq: number;
+  /** Non-null exactly while the member is connected. */
   socket: RoomSocket | null;
-  connected: boolean;
   graceTimer: ReturnType<typeof setTimeout> | null;
-  deckDone: boolean;
   /** placeIds this member has voted on — dedupes swipes and doubles as progress. */
   swiped: Set<string>;
 }
@@ -115,9 +114,7 @@ export class Room {
       resumeToken: randomBytes(16).toString("hex"),
       joinSeq: this.joinCounter++,
       socket: null,
-      connected: false,
       graceTimer: null,
-      deckDone: false,
       swiped: new Set(),
     };
     this.members.set(member.id, member);
@@ -132,11 +129,8 @@ export class Room {
       clearTimeout(member.graceTimer);
       member.graceTimer = null;
     }
-    if (member.socket && member.socket !== socket && member.socket.readyState === SOCKET_OPEN) {
-      member.socket.close(4000, "replaced by a newer connection");
-    }
+    if (member.socket !== socket) this.closeSocket(member, 4000, "replaced by a newer connection");
     member.socket = socket;
-    member.connected = true;
     this.sendTo(member, {
       type: "joined",
       memberId: member.id,
@@ -160,7 +154,6 @@ export class Room {
     const member = this.members.get(memberId);
     if (!member || member.socket !== socket) return;
     member.socket = null;
-    member.connected = false;
     if (this.isTerminal()) {
       this.broadcastRoomUpdate();
       return;
@@ -178,9 +171,7 @@ export class Room {
     const member = this.members.get(memberId);
     if (!member) return;
     if (member.graceTimer) clearTimeout(member.graceTimer);
-    if (member.socket && member.socket.readyState === SOCKET_OPEN) {
-      member.socket.close(4001, "left room");
-    }
+    this.closeSocket(member, 4001, "left room");
     this.members.delete(memberId);
     this.active.delete(memberId);
 
@@ -190,9 +181,10 @@ export class Room {
       return;
     }
     if (this.hostId === memberId) {
-      const next = [...this.members.values()]
-        .sort((a, b) => a.joinSeq - b.joinSeq)
-        .sort((a, b) => Number(b.connected) - Number(a.connected))[0]!;
+      // Connected members first, earliest joiner as tiebreak.
+      const next = [...this.members.values()].sort(
+        (a, b) => Number(b.socket !== null) - Number(a.socket !== null) || a.joinSeq - b.joinSeq,
+      )[0]!;
       this.hostId = next.id;
     }
     // A departure can complete unanimity or finish the deck for the rest.
@@ -202,9 +194,9 @@ export class Room {
 
   // -- lobby ----------------------------------------------------------------
 
-  setFilters(memberId: string, filters: Filters): ErrorCode | null {
-    if (this.status !== "lobby") return "BAD_STATE";
-    if (memberId !== this.hostId) return "NOT_HOST";
+  setFilters(memberId: string, filters: Filters): { code: ErrorCode; message: string } | null {
+    if (this.status !== "lobby") return { code: "BAD_STATE", message: "The session already started — search settings are locked." };
+    if (memberId !== this.hostId) return { code: "NOT_HOST", message: "Only the host can change the search settings." };
     this.filters = filters;
     this.broadcastRoomUpdate();
     return null;
@@ -213,6 +205,9 @@ export class Room {
   async start(memberId: string): Promise<{ code: ErrorCode; message: string } | null> {
     if (memberId !== this.hostId) return { code: "NOT_HOST", message: "Only the host can start the session." };
     if (this.status !== "lobby" || this.starting) return { code: "BAD_STATE", message: "The session already started." };
+    if (this.filters.lat == null || this.filters.lng == null) {
+      return { code: "BAD_STATE", message: "The host needs to share their location before starting." };
+    }
 
     this.starting = true;
     let deck: Restaurant[];
@@ -234,7 +229,7 @@ export class Room {
 
     // Anyone hanging in a disconnect grace period doesn't ride along.
     for (const member of [...this.members.values()]) {
-      if (!member.connected) this.removeMember(member.id, { silent: true });
+      if (member.socket === null) this.removeMember(member.id, { silent: true });
     }
 
     this.deck = shuffle(deck).slice(0, DECK_CAP);
@@ -244,11 +239,15 @@ export class Room {
     this.active = new Set(this.members.keys());
     for (const member of this.members.values()) {
       member.swiped = new Set();
-      member.deckDone = false;
     }
     this.status = "swiping";
     this.starting = false;
-    this.broadcast({ type: "session_started", deck: this.deck });
+    this.broadcast({
+      type: "session_started",
+      deck: this.deck,
+      members: this.memberInfos(),
+      progress: this.progressCounts(),
+    });
     return null;
   }
 
@@ -266,10 +265,13 @@ export class Room {
     if (!set) votes.set(placeId, (set = new Set()));
     set.add(memberId);
 
-    if (member.swiped.size >= this.deck.length) member.deckDone = true;
-
     this.broadcastProgress();
     this.evaluate();
+  }
+
+  /** Derived, not stored: the deck is fixed while swiping and `swiped` only grows. */
+  private deckDone(member: Member): boolean {
+    return this.deck.length > 0 && member.swiped.size >= this.deck.length;
   }
 
   private evaluate() {
@@ -286,7 +288,10 @@ export class Room {
       this.broadcast({ type: "matched", winner, ranked });
       return;
     }
-    if (allDone(this.active, (id) => this.members.get(id)?.deckDone ?? false)) {
+    if (allDone(this.active, (id) => {
+      const member = this.members.get(id);
+      return member ? this.deckDone(member) : false;
+    })) {
       const ranked = rankResults(this.deck, this.likes, this.passes);
       this.result = { kind: "finished", winner: null, ranked };
       this.status = "finished";
@@ -319,15 +324,16 @@ export class Room {
         id: m.id,
         name: m.name,
         isHost: m.id === this.hostId,
-        connected: m.connected,
-        deckDone: m.deckDone,
+        connected: m.socket !== null,
+        deckDone: this.deckDone(m),
       }));
   }
 
   private progressCounts() {
     let doneCount = 0;
     for (const id of this.active) {
-      if (this.members.get(id)?.deckDone) doneCount++;
+      const member = this.members.get(id);
+      if (member && this.deckDone(member)) doneCount++;
     }
     return { doneCount, totalCount: this.active.size };
   }
@@ -349,23 +355,27 @@ export class Room {
   private broadcast(msg: ServerMessage) {
     const data = JSON.stringify(msg);
     for (const member of this.members.values()) {
-      if (member.socket && member.socket.readyState === SOCKET_OPEN) {
-        try {
-          member.socket.send(data);
-        } catch {
-          // socket died mid-send; close/grace handling will catch up with it
-        }
-      }
+      this.sendRaw(member, data);
     }
   }
 
   private sendTo(member: Member, msg: ServerMessage) {
+    this.sendRaw(member, JSON.stringify(msg));
+  }
+
+  private sendRaw(member: Member, data: string) {
     if (member.socket && member.socket.readyState === SOCKET_OPEN) {
       try {
-        member.socket.send(JSON.stringify(msg));
+        member.socket.send(data);
       } catch {
-        // ignore — disconnect handling owns cleanup
+        // socket died mid-send; close/grace handling will catch up with it
       }
+    }
+  }
+
+  private closeSocket(member: Member, code: number, reason: string) {
+    if (member.socket && member.socket.readyState === SOCKET_OPEN) {
+      member.socket.close(code, reason);
     }
   }
 
@@ -373,6 +383,11 @@ export class Room {
 
   isTerminal(): boolean {
     return this.status === "matched" || this.status === "finished";
+  }
+
+  /** The join policy, for pre-checks (REST) — `join()` still enforces it. */
+  isJoinable(): boolean {
+    return this.status === "lobby" && this.members.size < MAX_MEMBERS;
   }
 
   getStatus(): RoomStatus {
@@ -388,9 +403,7 @@ export class Room {
   destroy() {
     for (const member of this.members.values()) {
       if (member.graceTimer) clearTimeout(member.graceTimer);
-      if (member.socket && member.socket.readyState === SOCKET_OPEN) {
-        member.socket.close(4002, "room closed");
-      }
+      this.closeSocket(member, 4002, "room closed");
     }
     this.members.clear();
     this.active.clear();

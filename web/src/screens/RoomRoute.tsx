@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { normalizeCode } from "@chews/shared";
 import { connectToRoom, leaveRoom } from "../lib/socket";
 import { getSavedName, saveName } from "../lib/identity";
 import { useRoomStore } from "../store/roomStore";
@@ -10,7 +11,7 @@ import Result from "./Result";
 
 export default function RoomRoute() {
   const { code = "" } = useParams();
-  const roomCode = code.toUpperCase();
+  const roomCode = normalizeCode(code);
   const navigate = useNavigate();
 
   const status = useRoomStore((s) => s.status);

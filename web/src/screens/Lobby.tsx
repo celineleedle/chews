@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import type { Filters } from "@chews/shared";
 import { send } from "../lib/socket";
 import { useRoomStore } from "../store/roomStore";
+import { priceDollars } from "../lib/format";
 import MemberAvatars from "../components/MemberAvatars";
 import { Logo, PrimaryButton, Screen } from "../components/ui";
 
-const PRICE_LABELS: Record<number, string> = { 1: "$", 2: "$$", 3: "$$$", 4: "$$$$" };
 const MILES = 1609.34;
 
 export default function Lobby() {
@@ -15,32 +15,29 @@ export default function Lobby() {
   const memberId = useRoomStore((s) => s.memberId);
   const filters = useRoomStore((s) => s.filters);
   const showToast = useRoomStore((s) => s.showToast);
+  const starting = useRoomStore((s) => s.pendingStart);
+  const markStartPending = useRoomStore((s) => s.markStartPending);
 
   const isHost = memberId === hostId;
   const hostName = members.find((m) => m.id === hostId)?.name ?? "the host";
-  const [starting, setStarting] = useState(false);
   const [radiusMi, setRadiusMi] = useState(filters.radiusM / MILES);
-  const [geoState, setGeoState] = useState<"idle" | "asking" | "ok" | "denied">(
-    filters.lat != null ? "ok" : "idle",
-  );
+  // "ok" is derived from filters (the server's word); only the asking flow is local.
+  const [askState, setAskState] = useState<"idle" | "asking" | "denied">("idle");
+  const geoState = filters.lat != null ? "ok" : askState;
   const geoRequested = useRef(false);
 
   useEffect(() => {
     setRadiusMi(filters.radiusM / MILES);
-    if (filters.lat != null) setGeoState("ok");
-  }, [filters.radiusM, filters.lat]);
+  }, [filters.radiusM]);
 
   // The host's location anchors the search for the whole room.
   useEffect(() => {
     if (!isHost || filters.lat != null || geoRequested.current || !("geolocation" in navigator)) return;
     geoRequested.current = true;
-    setGeoState("asking");
+    setAskState("asking");
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setGeoState("ok");
-        pushFilters({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-      },
-      () => setGeoState("denied"),
+      (pos) => pushFilters({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => setAskState("denied"),
       { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 },
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -140,7 +137,7 @@ export default function Lobby() {
                       on ? "bg-primary text-white" : "bg-ink/5 text-ink-soft"
                     }`}
                   >
-                    {PRICE_LABELS[level]}
+                    {priceDollars(level)}
                   </button>
                 );
               })}
@@ -185,10 +182,8 @@ export default function Lobby() {
           <PrimaryButton
             disabled={starting}
             onClick={() => {
-              setStarting(true);
+              markStartPending();
               send({ type: "start_session" });
-              // if the server rejects, a toast arrives; re-enable shortly
-              setTimeout(() => setStarting(false), 3000);
             }}
           >
             {starting ? "Firing up the grill…" : "Start swiping"}
