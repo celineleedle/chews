@@ -3,9 +3,12 @@ import type {
   Filters,
   MatchResult,
   MemberInfo,
+  PlaceReview,
   RankedResult,
   Restaurant,
+  RestaurantDetails,
   RoomSnapshot,
+  ServiceOptions,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -71,4 +74,14 @@ export type ServerMessage =
   /** fatal: joining again would just repeat the error — don't reconnect. */
   | { type: "error"; code: ErrorCode; message: string; fatal: boolean };
 
-export type { Filters, MatchResult, MemberInfo, RankedResult, Restaurant, RoomSnapshot };
+export type {
+  Filters,
+  MatchResult,
+  MemberInfo,
+  PlaceReview,
+  RankedResult,
+  Restaurant,
+  RestaurantDetails,
+  RoomSnapshot,
+  ServiceOptions,
+};

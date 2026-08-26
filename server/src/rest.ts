@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { fetchPhoto } from "./places/client.js";
+import { fetchPhoto, fetchStaticMap } from "./places/client.js";
 import type { RoomManager } from "./rooms/manager.js";
 
 const CREATES_PER_MINUTE_PER_IP = 20;
@@ -45,6 +45,21 @@ export function registerRest(app: FastifyInstance, manager: RoomManager) {
       .header("Cache-Control", "public, max-age=86400, immutable")
       .send(Buffer.from(photo.bytes));
   });
+
+  // Same deal for the detail sheet's location preview.
+  app.get<{ Querystring: { lat?: string; lng?: string; w?: string } }>(
+    "/api/staticmap",
+    async (req, reply) => {
+      const { lat, lng, w } = req.query;
+      if (lat == null || lng == null) return reply.code(400).send({ error: "missing lat/lng" });
+      const image = await fetchStaticMap(Number(lat), Number(lng), Number(w ?? 640));
+      if (!image) return reply.code(404).send({ error: "map unavailable" });
+      return reply
+        .header("Content-Type", image.contentType)
+        .header("Cache-Control", "public, max-age=86400, immutable")
+        .send(Buffer.from(image.bytes));
+    },
+  );
 
   app.get("/healthz", async () => ({ ok: true, rooms: manager.size }));
 }

@@ -26,6 +26,14 @@ cp .env.example .env
 # set MOCK_PLACES=0
 ```
 
+The same key also draws the detail sheet's location preview — enable **Maps Static
+API** on it too. Without that the sheet renders fine, just without the map.
+
+Note the billing tier: the deck search asks for `editorialSummary`, `reviews` and
+the `serves*` flags, which puts it in Places' **Enterprise + Atmosphere** SKU. It's
+still one search per deck (cached for `PLACES_CACHE_TTL_MIN`), not one call per
+restaurant.
+
 ### Trying it out
 
 1. Open http://localhost:5173, enter a name, **Start a room**, and allow the
@@ -63,6 +71,6 @@ All configuration is server-side env (see `.env.example`); the web client needs 
 | Var | Default | Meaning |
 | --- | --- | --- |
 | `PORT` | `8787` | HTTP + WS port |
-| `GOOGLE_PLACES_API_KEY` | _(empty)_ | Places API (New) key; empty ⇒ mock data |
+| `GOOGLE_PLACES_API_KEY` | _(empty)_ | Places API (New) + Maps Static key; empty ⇒ mock data |
 | `MOCK_PLACES` | `0` | `1` forces the mock deck even with a key |
 | `PLACES_CACHE_TTL_MIN` | `45` | search-result cache TTL |

@@ -1,9 +1,13 @@
-import type { Filters, Restaurant } from "@chews/shared";
+import type { Filters, PlaceReview, Restaurant, RestaurantDetails } from "@chews/shared";
 import { env } from "../env.js";
 import { TtlCache } from "./cache.js";
 import { geohash } from "./geohash.js";
 
 const SEARCH_URL = "https://places.googleapis.com/v1/places:searchText";
+// Everything from "places.websiteUri" down is only read by the swipe-up detail
+// sheet. Note the SKU steps: rating/priceLevel already put this call in the
+// Enterprise tier, and editorialSummary/reviews/the serves-* flags step it up
+// again to Enterprise + Atmosphere. One search covers the whole deck either way.
 const FIELD_MASK = [
   "places.id",
   "places.displayName",
@@ -15,7 +19,27 @@ const FIELD_MASK = [
   "places.currentOpeningHours.openNow",
   "places.photos.name",
   "places.googleMapsUri",
+  "places.websiteUri",
+  "places.nationalPhoneNumber",
+  "places.regularOpeningHours.weekdayDescriptions",
+  "places.priceRange",
+  "places.location",
+  "places.types",
+  "places.editorialSummary",
+  "places.reviews",
+  "places.dineIn",
+  "places.takeout",
+  "places.delivery",
+  "places.servesVegetarianFood",
+  "places.outdoorSeating",
+  "places.reservable",
 ].join(",");
+
+/** Photos carried per restaurant: one for the card, the rest for the sheet's gallery. */
+const MAX_PHOTOS = 5;
+/** Reviews are the bulkiest field and the whole deck ships over one WS frame. */
+const MAX_REVIEWS = 3;
+const MAX_REVIEW_CHARS = 280;
 
 const PRICE_FROM_ENUM: Record<string, number> = {
   PRICE_LEVEL_FREE: 1,
@@ -31,7 +55,20 @@ const PRICE_TO_ENUM: Record<number, string> = {
   4: "PRICE_LEVEL_VERY_EXPENSIVE",
 };
 
-interface ApiPlace {
+export interface ApiMoney {
+  currencyCode?: string;
+  units?: string | number;
+}
+
+export interface ApiReview {
+  authorAttribution?: { displayName?: string };
+  rating?: number;
+  text?: { text?: string };
+  originalText?: { text?: string };
+  relativePublishTimeDescription?: string;
+}
+
+export interface ApiPlace {
   id?: string;
   displayName?: { text?: string };
   rating?: number;
@@ -42,7 +79,105 @@ interface ApiPlace {
   currentOpeningHours?: { openNow?: boolean };
   photos?: Array<{ name?: string }>;
   googleMapsUri?: string;
+  websiteUri?: string;
+  nationalPhoneNumber?: string;
+  regularOpeningHours?: { weekdayDescriptions?: string[] };
+  priceRange?: { startPrice?: ApiMoney; endPrice?: ApiMoney };
+  location?: { latitude?: number; longitude?: number };
+  types?: string[];
+  editorialSummary?: { text?: string };
+  reviews?: ApiReview[];
+  dineIn?: boolean;
+  takeout?: boolean;
+  delivery?: boolean;
+  servesVegetarianFood?: boolean;
+  outdoorSeating?: boolean;
+  reservable?: boolean;
 }
+
+const CURRENCY_SYMBOLS: Record<string, string> = { USD: "$", EUR: "€", GBP: "£", JPY: "¥" };
+
+function money(m: ApiMoney | undefined): string | null {
+  if (!m || m.units == null) return null;
+  const symbol = CURRENCY_SYMBOLS[m.currencyCode ?? "USD"] ?? "";
+  return `${symbol}${m.units}`;
+}
+
+/** "$10–20", or a bare bound when Places only gives one side. */
+function priceRange(range: ApiPlace["priceRange"]): string | null {
+  const start = money(range?.startPrice);
+  const end = money(range?.endPrice);
+  if (start && end) return `${start}–${end.replace(/^[^\d]+/, "")}`;
+  return start ?? end ?? null;
+}
+
+/**
+ * Turns place types ("ramen_restaurant", "japanese_restaurant") into cuisine
+ * labels ("Ramen", "Japanese"). The generic buckets carry no information for a
+ * diner staring at a restaurant card, so they're dropped.
+ */
+const GENERIC_TYPES = new Set([
+  "restaurant",
+  "food",
+  "point_of_interest",
+  "establishment",
+  "store",
+]);
+
+function cuisines(types: string[] | undefined): string[] {
+  const labels: string[] = [];
+  for (const type of types ?? []) {
+    if (GENERIC_TYPES.has(type)) continue;
+    const label = type
+      .replace(/_restaurant$|_place$/, "")
+      .split("_")
+      .filter(Boolean)
+      .map((word) => word[0]!.toUpperCase() + word.slice(1))
+      .join(" ");
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  return labels.slice(0, 4);
+}
+
+function reviews(list: ApiReview[] | undefined): PlaceReview[] {
+  return (list ?? [])
+    .map((r) => {
+      const text = (r.text?.text ?? r.originalText?.text ?? "").trim();
+      return {
+        author: r.authorAttribution?.displayName ?? "A diner",
+        rating: r.rating ?? null,
+        text: text.length > MAX_REVIEW_CHARS ? `${text.slice(0, MAX_REVIEW_CHARS).trimEnd()}…` : text,
+        relativeTime: r.relativePublishTimeDescription ?? null,
+      };
+    })
+    .filter((r) => r.text.length > 0)
+    .slice(0, MAX_REVIEWS);
+}
+
+function details(p: ApiPlace, photoNames: string[]): RestaurantDetails {
+  return {
+    websiteUrl: p.websiteUri ?? null,
+    phone: p.nationalPhoneNumber ?? null,
+    hours: p.regularOpeningHours?.weekdayDescriptions ?? [],
+    priceRange: priceRange(p.priceRange),
+    lat: p.location?.latitude ?? null,
+    lng: p.location?.longitude ?? null,
+    summary: p.editorialSummary?.text ?? null,
+    cuisines: cuisines(p.types),
+    serves: {
+      dineIn: p.dineIn ?? null,
+      takeout: p.takeout ?? null,
+      delivery: p.delivery ?? null,
+      vegetarian: p.servesVegetarianFood ?? null,
+      outdoorSeating: p.outdoorSeating ?? null,
+      reservable: p.reservable ?? null,
+    },
+    reviews: reviews(p.reviews),
+    photoUrls: photoNames.slice(1).map(photoPath),
+  };
+}
+
+const photoPath = (name: string) => `/api/photo?name=${encodeURIComponent(name)}&w=800`;
 
 const cache = new TtlCache<Restaurant[]>(env.PLACES_CACHE_TTL_MIN * 60_000, 200);
 
@@ -54,6 +189,27 @@ function cacheKey(f: Filters): string {
     [...f.priceLevels].sort().join(""),
     f.openNow ? 1 : 0,
   ].join(":");
+}
+
+/** One Places result → the shape the deck ships to every member. */
+export function toRestaurant(p: ApiPlace & { id: string }): Restaurant {
+  const photoNames = (p.photos ?? [])
+    .map((photo) => photo.name)
+    .filter((name): name is string => Boolean(name))
+    .slice(0, MAX_PHOTOS);
+  return {
+    placeId: p.id,
+    name: p.displayName!.text!,
+    rating: p.rating ?? null,
+    ratingCount: p.userRatingCount ?? null,
+    priceLevel: p.priceLevel ? (PRICE_FROM_ENUM[p.priceLevel] ?? null) : null,
+    address: p.formattedAddress ?? "",
+    category: p.primaryTypeDisplayName?.text ?? null,
+    photoUrl: photoNames[0] ? photoPath(photoNames[0]) : null,
+    mapsUrl: p.googleMapsUri ?? null,
+    openNow: p.currentOpeningHours?.openNow ?? null,
+    details: details(p, photoNames),
+  };
 }
 
 export async function placesDeck(filters: Filters): Promise<Restaurant[]> {
@@ -110,21 +266,7 @@ export async function placesDeck(filters: Filters): Promise<Restaurant[]> {
   const data = (await res.json().catch(() => ({}))) as { places?: ApiPlace[] };
   const restaurants: Restaurant[] = (data.places ?? [])
     .filter((p): p is ApiPlace & { id: string } => Boolean(p.id && p.displayName?.text))
-    .map((p) => {
-      const photoName = p.photos?.[0]?.name;
-      return {
-        placeId: p.id,
-        name: p.displayName!.text!,
-        rating: p.rating ?? null,
-        ratingCount: p.userRatingCount ?? null,
-        priceLevel: p.priceLevel ? (PRICE_FROM_ENUM[p.priceLevel] ?? null) : null,
-        address: p.formattedAddress ?? "",
-        category: p.primaryTypeDisplayName?.text ?? null,
-        photoUrl: photoName ? `/api/photo?name=${encodeURIComponent(photoName)}&w=800` : null,
-        mapsUrl: p.googleMapsUri ?? null,
-        openNow: p.currentOpeningHours?.openNow ?? null,
-      };
-    });
+    .map(toRestaurant);
 
   if (restaurants.length > 0) cache.set(key, restaurants);
   return restaurants;
@@ -177,6 +319,74 @@ async function fetchPhotoUpstream(name: string, width: number): Promise<Photo | 
     return {
       bytes: await res.arrayBuffer(),
       contentType: res.headers.get("content-type") ?? "image/jpeg",
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Static map proxy
+// ---------------------------------------------------------------------------
+
+type MapImage = { bytes: ArrayBuffer; contentType: string };
+
+// Same shape as the photo cache: the whole room opens the same detail sheet, and
+// Maps Static is its own billable SKU, so cache and coalesce hard. A map is
+// keyed by rounded coordinates, so every member's request is one upstream call.
+const mapCache = new TtlCache<MapImage>(24 * 60 * 60_000, 100);
+const mapInflight = new Map<string, Promise<MapImage | null>>();
+
+/**
+ * Fetches a Maps Static image server-side so the API key never reaches the
+ * browser. Returns null when the coordinates are unusable or the Static Maps
+ * API isn't enabled on the key — callers should treat that as "no map".
+ */
+export function fetchStaticMap(lat: number, lng: number, widthPx: number): Promise<MapImage | null> {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return Promise.resolve(null);
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return Promise.resolve(null);
+
+  // ~11m of precision: nudging the request width shouldn't miss the cache.
+  const at = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+  const width = Math.min(Math.max(Math.round(widthPx) || 640, 100), 640);
+  const height = Math.round(width * 0.5);
+  const key = `${at}:${width}`;
+
+  const cached = mapCache.get(key);
+  if (cached) return Promise.resolve(cached);
+  const inflight = mapInflight.get(key);
+  if (inflight) return inflight;
+
+  const fetching = fetchStaticMapUpstream(at, width, height).then((image) => {
+    if (image) mapCache.set(key, image);
+    return image;
+  });
+  mapInflight.set(key, fetching);
+  void fetching.finally(() => mapInflight.delete(key));
+  return fetching;
+}
+
+async function fetchStaticMapUpstream(
+  at: string,
+  width: number,
+  height: number,
+): Promise<MapImage | null> {
+  const url =
+    `https://maps.googleapis.com/maps/api/staticmap?center=${at}&zoom=15` +
+    `&size=${width}x${height}&scale=2&maptype=roadmap` +
+    `&markers=${encodeURIComponent(`color:0xff5a36|${at}`)}` +
+    `&key=${encodeURIComponent(env.GOOGLE_PLACES_API_KEY)}`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) {
+      // Most likely the key doesn't have Maps Static enabled — say so once,
+      // loudly enough to find, then let the sheet render without a map.
+      console.error(`[staticmap] ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
+      return null;
+    }
+    return {
+      bytes: await res.arrayBuffer(),
+      contentType: res.headers.get("content-type") ?? "image/png",
     };
   } catch {
     return null;

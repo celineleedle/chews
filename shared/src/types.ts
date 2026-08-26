@@ -13,6 +13,45 @@ export interface Restaurant {
   photoUrl: string | null;
   mapsUrl: string | null;
   openNow: boolean | null;
+  /** Everything behind the swipe-up sheet. Absent on decks built before it existed. */
+  details?: RestaurantDetails | null;
+}
+
+/** Whether the place does each thing; null means Places didn't say. */
+export interface ServiceOptions {
+  dineIn: boolean | null;
+  takeout: boolean | null;
+  delivery: boolean | null;
+  vegetarian: boolean | null;
+  outdoorSeating: boolean | null;
+  reservable: boolean | null;
+}
+
+export interface PlaceReview {
+  author: string;
+  rating: number | null;
+  text: string;
+  relativeTime: string | null;
+}
+
+export interface RestaurantDetails {
+  /** The restaurant's own site — where the menu lives, when it has one. */
+  websiteUrl: string | null;
+  phone: string | null;
+  /** One line per weekday, straight from Places. */
+  hours: string[];
+  /** Typical spend, e.g. "$10–20". */
+  priceRange: string | null;
+  lat: number | null;
+  lng: number | null;
+  /** Google's one-line editorial blurb. */
+  summary: string | null;
+  /** Cuisine labels derived from the place types, e.g. ["Ramen", "Japanese"]. */
+  cuisines: string[];
+  serves: ServiceOptions;
+  reviews: PlaceReview[];
+  /** Proxied gallery photos beyond `photoUrl`. */
+  photoUrls: string[];
 }
 
 export interface MemberInfo {
