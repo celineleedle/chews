@@ -51,9 +51,11 @@ function LocationPreview({ lat, lng, name }: { lat: number; lng: number; name: s
 export default function RestaurantDetails({
   restaurant,
   onCollapse,
+  collapseLabel = "Back to swiping",
 }: {
   restaurant: Restaurant;
   onCollapse: () => void;
+  collapseLabel?: string;
 }) {
   const details = restaurant.details ?? null;
   // Today's line gets emphasised in the hours list. Places starts its week on
@@ -201,7 +203,7 @@ export default function RestaurantDetails({
 
       {!details && (
         <p className="text-ink-soft">
-          No extra details came back for this one — swipe on the photo and vibes.
+          No extra details came back for this one — you'll have to go on the photo and vibes.
         </p>
       )}
 
@@ -210,7 +212,7 @@ export default function RestaurantDetails({
         onClick={onCollapse}
         className="min-h-14 w-full rounded-2xl border-2 border-ink/15 bg-eggshell px-6 font-display text-lg font-bold text-ink"
       >
-        Back to swiping
+        {collapseLabel}
       </button>
     </div>
   );
