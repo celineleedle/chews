@@ -331,6 +331,114 @@ describe("Room", () => {
     expect(tri.socket.last("finished")!.matches.map((r) => r.placeId)).toEqual(["a"]);
   });
 
+  it("undo removes the vote, restores the card, and a re-like can match instantly", async () => {
+    const room = makeRoom();
+    const host = joinAs(room, "Host");
+    const pal = joinAs(room, "Pal");
+    await startAs(room, host.memberId);
+
+    room.swipe(host.memberId, "a", true);
+    room.swipe(pal.memberId, "a", false);
+    expect(pal.socket.last("match_found")).toBeUndefined();
+
+    expect(room.undoSwipe(pal.memberId, "a")).toBeNull();
+    const undone = pal.socket.last("swipe_undone")!;
+    expect(undone).toMatchObject({ placeId: "a", progressIndex: 0 });
+    // Host never gets the targeted frame.
+    expect(host.socket.last("swipe_undone")).toBeUndefined();
+
+    // Re-swiping the other way completes the match on the spot (AE3).
+    room.swipe(pal.memberId, "a", true);
+    expect(pal.socket.last("match_found")!.matches.map((r) => r.placeId)).toEqual(["a"]);
+  });
+
+  it("undo is one step: a second undo is rejected until the next swipe", async () => {
+    const room = makeRoom();
+    const host = joinAs(room, "Host");
+    joinAs(room, "Pal");
+    await startAs(room, host.memberId);
+
+    room.swipe(host.memberId, "a", false);
+    expect(room.undoSwipe(host.memberId, "a")).toBeNull();
+    expect(room.undoSwipe(host.memberId, "a")).toMatchObject({ code: "BAD_STATE" });
+
+    room.swipe(host.memberId, "a", true);
+    expect(room.undoSwipe(host.memberId, "a")).toBeNull();
+  });
+
+  it("undo is rejected on a matched card, a stale placeId, and after finish", async () => {
+    const room = makeRoom();
+    const host = joinAs(room, "Host");
+    const pal = joinAs(room, "Pal");
+    await startAs(room, host.memberId);
+
+    room.swipe(pal.memberId, "a", true);
+    room.swipe(host.memberId, "a", true);
+    expect(host.socket.last("match_found")).toBeDefined();
+
+    // Host's last swipe completed the match — protected (AE5).
+    expect(room.undoSwipe(host.memberId, "a")).toMatchObject({ code: "BAD_STATE" });
+    expect(host.socket.last("joined")).toBeDefined();
+
+    room.swipe(host.memberId, "b", false);
+    // placeId must be the recorded last swipe.
+    expect(room.undoSwipe(host.memberId, "c")).toMatchObject({ code: "BAD_STATE" });
+
+    room.swipe(host.memberId, "c", false);
+    room.swipe(pal.memberId, "b", false);
+    room.swipe(pal.memberId, "c", false);
+    expect(room.getStatus()).toBe("finished");
+    expect(room.undoSwipe(host.memberId, "c")).toMatchObject({ code: "BAD_STATE" });
+  });
+
+  it("undoing after finishing your deck un-trips the room's all-done state", async () => {
+    const room = makeRoom();
+    const host = joinAs(room, "Host");
+    const pal = joinAs(room, "Pal");
+    await startAs(room, host.memberId);
+
+    room.swipe(host.memberId, "a", false);
+    room.swipe(host.memberId, "b", false);
+    room.swipe(host.memberId, "c", false);
+    // Host is done; room still swiping (pal isn't).
+    expect(host.socket.last("progress")).toMatchObject({ doneCount: 1, totalCount: 2 });
+
+    expect(room.undoSwipe(host.memberId, "c")).toBeNull();
+    expect(host.socket.last("progress")).toMatchObject({ doneCount: 0, totalCount: 2 });
+
+    room.swipe(pal.memberId, "a", false);
+    room.swipe(pal.memberId, "b", false);
+    room.swipe(pal.memberId, "c", false);
+    // Pal is done but host isn't anymore — no finish until host re-swipes.
+    expect(room.getStatus()).toBe("swiping");
+    room.swipe(host.memberId, "c", false);
+    expect(room.getStatus()).toBe("finished");
+  });
+
+  it("a resume snapshot reflects undo state in progressIndex and canUndo", async () => {
+    const room = makeRoom();
+    const host = joinAs(room, "Host");
+    const pal = joinAs(room, "Pal");
+    const token = pal.socket.last("joined")!.resumeToken;
+    await startAs(room, host.memberId);
+
+    room.swipe(pal.memberId, "a", false);
+    expect(room.undoSwipe(pal.memberId, "a")).toBeNull();
+    room.handleDisconnect(pal.memberId, pal.socket);
+
+    const rejoin = new FakeSocket();
+    room.join(rejoin, { clientId: pal.clientId, resumeToken: token });
+    const snapshot = rejoin.last("joined")!.room;
+    expect(snapshot.progressIndex).toBe(0);
+    expect(snapshot.canUndo).toBe(false);
+
+    room.swipe(pal.memberId, "b", true);
+    room.handleDisconnect(pal.memberId, rejoin);
+    const rejoin2 = new FakeSocket();
+    room.join(rejoin2, { clientId: pal.clientId, resumeToken: token });
+    expect(rejoin2.last("joined")!.room.canUndo).toBe(true);
+  });
+
   it("expires when empty, after terminal TTL, and at max age", async () => {
     const room = makeRoom();
     const t0 = Date.now();

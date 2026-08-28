@@ -35,6 +35,8 @@ interface Member {
   graceTimer: ReturnType<typeof setTimeout> | null;
   /** placeIds this member has voted on — dedupes swipes and doubles as progress. */
   swiped: Set<string>;
+  /** The one swipe that can be taken back; cleared by undo (one step only). */
+  lastSwipe: { placeId: string; liked: boolean } | null;
 }
 
 export type JoinResult =
@@ -119,6 +121,7 @@ export class Room {
       socket: null,
       graceTimer: null,
       swiped: new Set(),
+      lastSwipe: null,
     };
     this.members.set(member.id, member);
     this.emptySince = null;
@@ -245,6 +248,7 @@ export class Room {
     this.active = new Set(this.members.keys());
     for (const member of this.members.values()) {
       member.swiped = new Set();
+      member.lastSwipe = null;
     }
     this.status = "swiping";
     this.starting = false;
@@ -277,6 +281,7 @@ export class Room {
     if (!this.deckIds.has(placeId) || member.swiped.has(placeId)) return;
 
     member.swiped.add(placeId);
+    member.lastSwipe = { placeId, liked };
     const votes = liked ? this.likes : this.passes;
     let set = votes.get(placeId);
     if (!set) votes.set(placeId, (set = new Set()));
@@ -284,6 +289,39 @@ export class Room {
 
     this.broadcastProgress();
     this.evaluate();
+  }
+
+  /**
+   * Take back the member's single most recent swipe. Server-confirmed: the
+   * client only moves its deck on the targeted `swipe_undone` frame. A card
+   * that already matched is protected — matches are permanent.
+   */
+  undoSwipe(memberId: string, placeId: string): { code: ErrorCode; message: string } | null {
+    if (this.status !== "swiping") return { code: "BAD_STATE", message: "The session isn't active." };
+    const member = this.members.get(memberId);
+    if (!member || !this.active.has(memberId)) {
+      return { code: "BAD_STATE", message: "You're not part of this session." };
+    }
+    const last = member.lastSwipe;
+    if (!last || last.placeId !== placeId) {
+      return { code: "BAD_STATE", message: "Nothing to take back." };
+    }
+    if (this.matchedIds.has(placeId)) {
+      return { code: "BAD_STATE", message: "That one's already a match — keep swiping instead." };
+    }
+
+    const votes = last.liked ? this.likes : this.passes;
+    const set = votes.get(placeId);
+    if (set) {
+      set.delete(memberId);
+      if (set.size === 0) votes.delete(placeId);
+    }
+    member.swiped.delete(placeId);
+    member.lastSwipe = null;
+
+    this.sendTo(member, { type: "swipe_undone", placeId, progressIndex: member.swiped.size });
+    this.broadcastProgress();
+    return null;
   }
 
   /** Derived, not stored: the deck is fixed while swiping and `swiped` only grows. */
@@ -343,9 +381,13 @@ export class Room {
     };
   }
 
-  /** Always false until the undo unit lands — the last-swipe record arrives with it. */
-  private canUndo(_member: Member | undefined): boolean {
-    return false;
+  /** Whether the member's most recent swipe is currently take-backable. */
+  private canUndo(member: Member | undefined): boolean {
+    return (
+      this.status === "swiping" &&
+      member?.lastSwipe != null &&
+      !this.matchedIds.has(member.lastSwipe.placeId)
+    );
   }
 
   private memberInfos(): MemberInfo[] {

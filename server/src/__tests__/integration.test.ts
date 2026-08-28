@@ -158,6 +158,13 @@ describe("end-to-end room flow over real websockets", () => {
 
     pal.send({ type: "swipe", placeId: deck[0]!.placeId, liked: true });
     await pal.waitFor("progress");
+
+    // Undo round-trip: targeted confirmation, then re-swipe to restore progress.
+    pal.send({ type: "undo_swipe", placeId: deck[0]!.placeId });
+    const undone = await pal.waitFor("swipe_undone");
+    expect(undone).toMatchObject({ placeId: deck[0]!.placeId, progressIndex: 0 });
+    pal.send({ type: "swipe", placeId: deck[0]!.placeId, liked: true });
+    await pal.waitFor("progress");
     pal.ws.terminate();
 
     const palAgain = new TestClient();

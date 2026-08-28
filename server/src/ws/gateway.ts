@@ -64,6 +64,11 @@ export function registerGateway(app: FastifyInstance, manager: RoomManager) {
         case "swipe":
           room.swipe(memberId, msg.placeId, msg.liked);
           break;
+        case "undo_swipe": {
+          const err = room.undoSwipe(memberId, msg.placeId);
+          if (err) send(socket, { type: "error", code: err.code, message: err.message, fatal: false });
+          break;
+        }
         case "finish_now": {
           const err = room.finishNow(memberId);
           if (err) send(socket, { type: "error", code: err.code, message: err.message, fatal: false });
