@@ -87,8 +87,10 @@ describe("Room", () => {
     expect(await room.start(pal.memberId)).toMatchObject({ code: "NOT_HOST" });
   });
 
-  it("treats repeated start requests as idempotent while the first start is in flight", async () => {
-    let resolveDeck: ((deck: Restaurant[]) => void) | null = null;
+  it("lets a repeated start request share the in-flight start's success", async () => {
+    // The executor runs synchronously inside start(), so this is assigned
+    // before the first await — hence the definite-assignment assertion.
+    let resolveDeck!: (deck: Restaurant[]) => void;
     const room = new Room(
       "TESTC",
       () =>
@@ -100,11 +102,41 @@ describe("Room", () => {
 
     room.setFilters(host.memberId, { ...DEFAULT_FILTERS, lat: 37.77, lng: -122.42 });
     const firstStart = room.start(host.memberId);
-    await Promise.resolve();
-    expect(await room.start(host.memberId)).toBeNull();
+    const retry = room.start(host.memberId);
 
-    resolveDeck?.(DECK);
+    resolveDeck(DECK);
     expect(await firstStart).toBeNull();
+    expect(await retry).toBeNull();
+    expect(room.getStatus()).toBe("swiping");
+  });
+
+  it("delivers an in-flight start's failure to a duplicate requester, then allows a fresh start", async () => {
+    let calls = 0;
+    const room = new Room("TESTC", () => {
+      calls++;
+      return calls === 1 ? Promise.reject(new Error("Places is down")) : Promise.resolve(DECK);
+    });
+    const host = joinAs(room, "Host");
+
+    room.setFilters(host.memberId, { ...DEFAULT_FILTERS, lat: 37.77, lng: -122.42 });
+    const firstStart = room.start(host.memberId);
+    const retry = room.start(host.memberId);
+
+    expect(await firstStart).toMatchObject({ code: "PLACES_UNAVAILABLE", message: "Places is down" });
+    expect(await retry).toMatchObject({ code: "PLACES_UNAVAILABLE", message: "Places is down" });
+    expect(room.getStatus()).toBe("lobby");
+
+    expect(await room.start(host.memberId)).toBeNull();
+    expect(room.getStatus()).toBe("swiping");
+  });
+
+  it("ignores a stale start retry after the session has begun instead of erroring", async () => {
+    const room = makeRoom();
+    const host = joinAs(room, "Host");
+    joinAs(room, "Pal");
+    expect(await startAs(room, host.memberId)).toBeNull();
+
+    expect(await room.start(host.memberId)).toBeNull();
     expect(room.getStatus()).toBe("swiping");
   });
 

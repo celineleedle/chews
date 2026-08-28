@@ -58,7 +58,7 @@ export class Room {
   private filters: Filters = { ...DEFAULT_FILTERS };
   private members = new Map<string, Member>();
   private joinCounter = 0;
-  private starting = false;
+  private startInFlight: Promise<{ code: ErrorCode; message: string } | null> | null = null;
 
   private deck: Restaurant[] = [];
   private deckIds = new Set<string>();
@@ -204,27 +204,31 @@ export class Room {
 
   async start(memberId: string): Promise<{ code: ErrorCode; message: string } | null> {
     if (memberId !== this.hostId) return { code: "NOT_HOST", message: "Only the host can start the session." };
-    if (this.status !== "lobby") return { code: "BAD_STATE", message: "The session already started." };
-    if (this.starting) return null;
+    // A stale retry after the session already started is a no-op, not an error.
+    if (this.status !== "lobby") return null;
+    // A duplicate request while a start is in flight shares that start's
+    // outcome, so a retrying host still hears about a failure.
+    if (this.startInFlight) return this.startInFlight;
     if (this.filters.lat == null || this.filters.lng == null) {
       return { code: "BAD_STATE", message: "The host needs to share their location before starting." };
     }
 
-    this.starting = true;
+    this.startInFlight = this.doStart().finally(() => {
+      this.startInFlight = null;
+    });
+    return this.startInFlight;
+  }
+
+  private async doStart(): Promise<{ code: ErrorCode; message: string } | null> {
     let deck: Restaurant[];
     try {
       deck = await this.getDeck(this.filters);
     } catch (err) {
-      this.starting = false;
       const message = err instanceof Error ? err.message : "Couldn't load restaurants.";
       return { code: "PLACES_UNAVAILABLE", message };
     }
-    if (this.status !== "lobby") {
-      this.starting = false;
-      return null;
-    }
+    if (this.status !== "lobby") return null;
     if (deck.length === 0) {
-      this.starting = false;
       return { code: "PLACES_UNAVAILABLE", message: "No restaurants found nearby — try widening the search." };
     }
 
@@ -242,7 +246,6 @@ export class Room {
       member.swiped = new Set();
     }
     this.status = "swiping";
-    this.starting = false;
     this.broadcast({
       type: "session_started",
       deck: this.deck,
