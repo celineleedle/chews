@@ -118,6 +118,24 @@ describe("end-to-end room flow over real websockets", () => {
     expect(matchedB.matches.map((r) => r.placeId)).toEqual([target]);
     expect(matchedC.matches.map((r) => r.placeId)).toEqual([target]);
 
+    // The session keeps going after the match; the host can end it early.
+    const next = deckA.deck[1]!.placeId;
+    ben.send({ type: "swipe", placeId: next, liked: true });
+    await ben.waitFor("progress");
+
+    ben.send({ type: "finish_now" });
+    expect((await ben.waitFor("error")).code).toBe("NOT_HOST");
+
+    ana.send({ type: "finish_now" });
+    const [finishedA, finishedB, finishedC] = await Promise.all([
+      ana.waitFor("finished"),
+      ben.waitFor("finished"),
+      cal.waitFor("finished"),
+    ]);
+    expect(finishedA.matches.map((r) => r.placeId)).toEqual([target]);
+    expect(finishedB.ranked.map((r) => r.restaurant.placeId)).toEqual([next]);
+    expect(finishedC.matches).toHaveLength(1);
+
     for (const c of [ana, ben, cal]) c.ws.close();
   });
 

@@ -259,6 +259,17 @@ export class Room {
 
   // -- swiping --------------------------------------------------------------
 
+  /** Host-only early exit: jump to results once at least one match exists. */
+  finishNow(memberId: string): { code: ErrorCode; message: string } | null {
+    if (memberId !== this.hostId) return { code: "NOT_HOST", message: "Only the host can end the session." };
+    if (this.status !== "swiping") return { code: "BAD_STATE", message: "The session isn't active." };
+    if (this.matches.length === 0) {
+      return { code: "BAD_STATE", message: "Finish now unlocks after the first match." };
+    }
+    this.finish();
+    return null;
+  }
+
   swipe(memberId: string, placeId: string, liked: boolean) {
     if (this.status !== "swiping") return;
     const member = this.members.get(memberId);

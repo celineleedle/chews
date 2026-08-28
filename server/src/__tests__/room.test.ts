@@ -286,6 +286,51 @@ describe("Room", () => {
     expect(finished.ranked.map((r) => r.restaurant.placeId)).toEqual(["a"]);
   });
 
+  it("host finish-now ends the session with matches and ranked-so-far", async () => {
+    const room = makeRoom();
+    const host = joinAs(room, "Host");
+    const pal = joinAs(room, "Pal");
+    await startAs(room, host.memberId);
+
+    // No match yet: finish-now is locked.
+    expect(room.finishNow(host.memberId)).toMatchObject({ code: "BAD_STATE" });
+
+    room.swipe(host.memberId, "a", true);
+    room.swipe(pal.memberId, "a", true);
+    room.swipe(host.memberId, "b", true);
+
+    // Non-host can't end it.
+    expect(room.finishNow(pal.memberId)).toMatchObject({ code: "NOT_HOST" });
+    expect(room.getStatus()).toBe("swiping");
+
+    expect(room.finishNow(host.memberId)).toBeNull();
+    const finished = pal.socket.last("finished")!;
+    expect(finished.matches.map((r) => r.placeId)).toEqual(["a"]);
+    // Ranked from votes so far: only b has a like; the match is excluded.
+    expect(finished.ranked.map((r) => r.restaurant.placeId)).toEqual(["b"]);
+    // Session is over: further finish-now and swipes are rejected/ignored.
+    expect(room.finishNow(host.memberId)).toMatchObject({ code: "BAD_STATE" });
+  });
+
+  it("finish-now power moves with host handoff", async () => {
+    const room = makeRoom();
+    const host = joinAs(room, "Host");
+    const pal = joinAs(room, "Pal");
+    const tri = joinAs(room, "Tri");
+    await startAs(room, host.memberId);
+
+    room.swipe(pal.memberId, "a", true);
+    room.swipe(tri.memberId, "a", true);
+    room.swipe(host.memberId, "a", true);
+    expect(pal.socket.last("match_found")).toBeDefined();
+
+    room.leave(host.memberId);
+    // pal is the new host; the ex-host's power is gone, pal's works.
+    expect(room.finishNow(tri.memberId)).toMatchObject({ code: "NOT_HOST" });
+    expect(room.finishNow(pal.memberId)).toBeNull();
+    expect(tri.socket.last("finished")!.matches.map((r) => r.placeId)).toEqual(["a"]);
+  });
+
   it("expires when empty, after terminal TTL, and at max age", async () => {
     const room = makeRoom();
     const t0 = Date.now();
