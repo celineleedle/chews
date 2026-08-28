@@ -16,6 +16,7 @@ export default function Lobby() {
   const filters = useRoomStore((s) => s.filters);
   const showToast = useRoomStore((s) => s.showToast);
   const starting = useRoomStore((s) => s.pendingStart);
+  const connection = useRoomStore((s) => s.connection);
   const markStartPending = useRoomStore((s) => s.markStartPending);
 
   const isHost = memberId === hostId;
@@ -180,10 +181,13 @@ export default function Lobby() {
       <div className="mt-auto pt-2">
         {isHost ? (
           <PrimaryButton
-            disabled={starting}
+            disabled={starting || connection !== "open"}
             onClick={() => {
+              if (!send({ type: "start_session" })) {
+                showToast("Still reconnecting — give it a sec and try again.");
+                return;
+              }
               markStartPending();
-              send({ type: "start_session" });
             }}
           >
             {starting ? "Firing up the grill…" : "Start swiping"}

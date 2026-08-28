@@ -72,10 +72,12 @@ function open() {
   };
 }
 
-export function send(msg: ClientMessage) {
+export function send(msg: ClientMessage): boolean {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
+    return true;
   }
+  return false;
 }
 
 export function leaveRoom() {

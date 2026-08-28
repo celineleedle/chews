@@ -204,7 +204,8 @@ export class Room {
 
   async start(memberId: string): Promise<{ code: ErrorCode; message: string } | null> {
     if (memberId !== this.hostId) return { code: "NOT_HOST", message: "Only the host can start the session." };
-    if (this.status !== "lobby" || this.starting) return { code: "BAD_STATE", message: "The session already started." };
+    if (this.status !== "lobby") return { code: "BAD_STATE", message: "The session already started." };
+    if (this.starting) return null;
     if (this.filters.lat == null || this.filters.lng == null) {
       return { code: "BAD_STATE", message: "The host needs to share their location before starting." };
     }

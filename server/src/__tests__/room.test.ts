@@ -87,6 +87,27 @@ describe("Room", () => {
     expect(await room.start(pal.memberId)).toMatchObject({ code: "NOT_HOST" });
   });
 
+  it("treats repeated start requests as idempotent while the first start is in flight", async () => {
+    let resolveDeck: ((deck: Restaurant[]) => void) | null = null;
+    const room = new Room(
+      "TESTC",
+      () =>
+        new Promise<Restaurant[]>((resolve) => {
+          resolveDeck = resolve;
+        }),
+    );
+    const host = joinAs(room, "Host");
+
+    room.setFilters(host.memberId, { ...DEFAULT_FILTERS, lat: 37.77, lng: -122.42 });
+    const firstStart = room.start(host.memberId);
+    await Promise.resolve();
+    expect(await room.start(host.memberId)).toBeNull();
+
+    resolveDeck?.(DECK);
+    expect(await firstStart).toBeNull();
+    expect(room.getStatus()).toBe("swiping");
+  });
+
   it("resumes a member by token with progress intact; wrong token mid-session is blocked", async () => {
     const room = makeRoom();
     const host = joinAs(room, "Host");
