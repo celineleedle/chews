@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Filters } from "@chews/shared";
-import { send } from "../lib/socket";
+import { requestStartSession, send } from "../lib/socket";
 import { useRoomStore } from "../store/roomStore";
 import { priceDollars } from "../lib/format";
 import MemberAvatars from "../components/MemberAvatars";
@@ -16,7 +16,7 @@ export default function Lobby() {
   const filters = useRoomStore((s) => s.filters);
   const showToast = useRoomStore((s) => s.showToast);
   const starting = useRoomStore((s) => s.pendingStart);
-  const markStartPending = useRoomStore((s) => s.markStartPending);
+  const connection = useRoomStore((s) => s.connection);
 
   const isHost = memberId === hostId;
   const hostName = members.find((m) => m.id === hostId)?.name ?? "the host";
@@ -179,13 +179,7 @@ export default function Lobby() {
 
       <div className="mt-auto pt-2">
         {isHost ? (
-          <PrimaryButton
-            disabled={starting}
-            onClick={() => {
-              markStartPending();
-              send({ type: "start_session" });
-            }}
-          >
+          <PrimaryButton disabled={starting || connection !== "open"} onClick={requestStartSession}>
             {starting ? "Firing up the grill…" : "Start swiping"}
           </PrimaryButton>
         ) : (
