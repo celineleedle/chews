@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence } from "motion/react";
 import type { Restaurant } from "@chews/shared";
 import { send } from "../lib/socket";
@@ -74,6 +74,14 @@ export default function Swipe() {
   const isHost = memberId === hostId;
   const done = progressIndex >= deck.length;
   const waitingOn = progress.totalCount - progress.doneCount;
+
+  // A new match preempts the matches-so-far list; without this, dismissing the
+  // celebration popup would re-open the stale list underneath it.
+  useEffect(() => {
+    if (popupMatches) setShowMatchList(false);
+  }, [popupMatches]);
+
+  const closeMatchList = useCallback(() => setShowMatchList(false), []);
 
   // Go-back targets the card just behind the deck position. Display-only
   // derivation from server-sent facts — the server gate stays authoritative,
@@ -162,7 +170,9 @@ export default function Swipe() {
               deck={deck}
               index={progressIndex}
               onSwipe={handleSwipe}
-              disabled={connection !== "open"}
+              // Also locked while an undo awaits its confirmation — a swipe
+              // racing the rewind would desync the deck from the server.
+              disabled={connection !== "open" || undoPending}
             />
           </div>
           {progressIndex > 0 && goBackButton}
@@ -192,7 +202,7 @@ export default function Swipe() {
             matches={matches}
             title="Matches so far"
             subtitle="Anything here already works for everyone."
-            onDismiss={() => setShowMatchList(false)}
+            onDismiss={closeMatchList}
             dismissLabel="Back to swiping"
           />
         )}

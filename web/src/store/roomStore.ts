@@ -145,7 +145,13 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
         });
         break;
       case "swipe_undone":
-        set({ progressIndex: msg.progressIndex, canUndo: false, undoPending: false });
+        set((s) =>
+          // A newer local swipe already advanced past the reported index (the
+          // confirmation raced a fling) — don't rewind the deck underneath it.
+          s.progressIndex > msg.progressIndex + 1
+            ? { canUndo: false, undoPending: false }
+            : { progressIndex: msg.progressIndex, canUndo: false, undoPending: false },
+        );
         break;
       case "error": {
         set({ pendingStart: false, undoPending: false, finishPending: false });
