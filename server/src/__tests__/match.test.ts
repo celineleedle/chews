@@ -20,29 +20,44 @@ function restaurant(placeId: string): Restaurant {
 const votes = (entries: Array<[string, string[]]>) =>
   new Map(entries.map(([place, members]) => [place, new Set(members)]));
 
+const none = new Set<string>();
+
 describe("checkUnanimous", () => {
-  it("returns the place everyone active has liked", () => {
+  it("returns the places everyone active has liked", () => {
     const likes = votes([
       ["a", ["m1", "m2"]],
       ["b", ["m1", "m2", "m3"]],
     ]);
-    expect(checkUnanimous(likes, new Set(["m1", "m2", "m3"]))).toBe("b");
+    expect(checkUnanimous(likes, new Set(["m1", "m2", "m3"]), none)).toEqual(["b"]);
+  });
+
+  it("returns every newly unanimous place in one pass", () => {
+    const likes = votes([
+      ["a", ["m1", "m2"]],
+      ["b", ["m1", "m2"]],
+    ]);
+    expect(checkUnanimous(likes, new Set(["m1", "m2"]), none)).toEqual(["a", "b"]);
+  });
+
+  it("never re-fires for an already-matched place", () => {
+    const likes = votes([["a", ["m1", "m2"]]]);
+    expect(checkUnanimous(likes, new Set(["m1", "m2"]), new Set(["a"]))).toEqual([]);
   });
 
   it("ignores likes from departed members when judging unanimity", () => {
     const likes = votes([["a", ["m1", "gone"]]]);
-    expect(checkUnanimous(likes, new Set(["m1", "m2"]))).toBeNull();
+    expect(checkUnanimous(likes, new Set(["m1", "m2"]), none)).toEqual([]);
   });
 
   it("a departure can complete a match", () => {
     const likes = votes([["a", ["m1", "m2"]]]);
-    expect(checkUnanimous(likes, new Set(["m1", "m2", "m3"]))).toBeNull();
-    expect(checkUnanimous(likes, new Set(["m1", "m2"]))).toBe("a");
+    expect(checkUnanimous(likes, new Set(["m1", "m2", "m3"]), none)).toEqual([]);
+    expect(checkUnanimous(likes, new Set(["m1", "m2"]), none)).toEqual(["a"]);
   });
 
   it("never matches a solo participant with themselves", () => {
     const likes = votes([["a", ["m1"]]]);
-    expect(checkUnanimous(likes, new Set(["m1"]))).toBeNull();
+    expect(checkUnanimous(likes, new Set(["m1"]), none)).toEqual([]);
   });
 });
 
@@ -59,9 +74,18 @@ describe("rankResults", () => {
       ["a", ["m2", "m3"]],
       ["c", ["m2"]],
     ]);
-    const ranked = rankResults(deck, likes, passes);
+    const ranked = rankResults(deck, likes, passes, none);
     expect(ranked.map((r) => r.restaurant.placeId)).toEqual(["b", "c", "a"]);
     expect(ranked[0]).toMatchObject({ likeCount: 2, passCount: 0 });
+  });
+
+  it("excludes matched places even when everyone liked them", () => {
+    const likes = votes([
+      ["a", ["m1", "m2"]],
+      ["b", ["m1"]],
+    ]);
+    const ranked = rankResults(deck, likes, votes([]), new Set(["a"]));
+    expect(ranked.map((r) => r.restaurant.placeId)).toEqual(["b"]);
   });
 });
 

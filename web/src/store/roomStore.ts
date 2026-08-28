@@ -3,7 +3,7 @@ import {
   DEFAULT_FILTERS,
   type ErrorCode,
   type Filters,
-  type MatchResult,
+  type SessionResult,
   type MemberInfo,
   type Restaurant,
   type RoomStatus,
@@ -24,7 +24,21 @@ interface RoomStore {
   deck: Restaurant[] | null;
   progressIndex: number;
   progress: { doneCount: number; totalCount: number };
-  result: MatchResult | null;
+  /** Unanimous matches so far, in the order they happened (server truth). */
+  matches: Restaurant[];
+  /**
+   * Matches to show in the popup right now. Only set by match events received
+   * while connected — a resume never replays popups; the indicator covers it.
+   * A match event arriving while the popup is open merges into it.
+   */
+  popupMatches: Restaurant[] | null;
+  /** Server-confirmed: the most recent swipe can be taken back. */
+  canUndo: boolean;
+  /** undo_swipe sent, no swipe_undone/error back yet. */
+  undoPending: boolean;
+  /** finish_now sent, no finished/error back yet. */
+  finishPending: boolean;
+  result: SessionResult | null;
   fatalError: { code: ErrorCode; message: string } | null;
   toast: string | null;
   /** start_session sent, no session_started/error back yet. */
@@ -33,6 +47,9 @@ interface RoomStore {
   setConnection: (c: ConnectionState) => void;
   handleServerMessage: (msg: ServerMessage) => void;
   recordLocalSwipe: () => void;
+  dismissMatchPopup: () => void;
+  markUndoPending: () => void;
+  markFinishPending: () => void;
   markStartPending: () => void;
   showToast: (text: string) => void;
   reset: () => void;
@@ -49,6 +66,11 @@ const initial = {
   deck: null,
   progressIndex: 0,
   progress: { doneCount: 0, totalCount: 0 },
+  matches: [] as Restaurant[],
+  popupMatches: null,
+  canUndo: false,
+  undoPending: false,
+  finishPending: false,
   result: null,
   fatalError: null,
   toast: null,
@@ -76,9 +98,13 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
           deck: msg.room.deck,
           progressIndex: msg.room.progressIndex,
           progress: msg.room.progress,
+          matches: msg.room.matches,
+          canUndo: msg.room.canUndo,
           result: msg.room.result,
           fatalError: null,
           pendingStart: false,
+          undoPending: false,
+          finishPending: false,
         });
         break;
       }
@@ -91,6 +117,9 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
           deck: msg.deck,
           members: msg.members,
           progressIndex: 0,
+          matches: [],
+          popupMatches: null,
+          canUndo: false,
           result: null,
           progress: msg.progress,
           pendingStart: false,
@@ -99,14 +128,33 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
       case "progress":
         set({ progress: { doneCount: msg.doneCount, totalCount: msg.totalCount } });
         break;
-      case "matched":
-        set({ status: "matched", result: { kind: "matched", winner: msg.winner, ranked: msg.ranked } });
+      case "match_found":
+        set((s) => ({
+          matches: [...s.matches, ...msg.matches],
+          popupMatches: s.popupMatches ? [...s.popupMatches, ...msg.matches] : msg.matches,
+        }));
         break;
       case "finished":
-        set({ status: "finished", result: { kind: "finished", winner: null, ranked: msg.ranked } });
+        set({
+          status: "finished",
+          result: { matches: msg.matches, ranked: msg.ranked },
+          matches: msg.matches,
+          popupMatches: null,
+          canUndo: false,
+          finishPending: false,
+        });
+        break;
+      case "swipe_undone":
+        set((s) =>
+          // A newer local swipe already advanced past the reported index (the
+          // confirmation raced a fling) — don't rewind the deck underneath it.
+          s.progressIndex > msg.progressIndex + 1
+            ? { canUndo: false, undoPending: false }
+            : { progressIndex: msg.progressIndex, canUndo: false, undoPending: false },
+        );
         break;
       case "error": {
-        set({ pendingStart: false });
+        set({ pendingStart: false, undoPending: false, finishPending: false });
         if (msg.fatal) {
           set({ fatalError: { code: msg.code, message: msg.message } });
         } else {
@@ -117,7 +165,13 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     }
   },
 
-  recordLocalSwipe: () => set((s) => ({ progressIndex: s.progressIndex + 1 })),
+  recordLocalSwipe: () => set((s) => ({ progressIndex: s.progressIndex + 1, canUndo: true })),
+
+  dismissMatchPopup: () => set({ popupMatches: null }),
+
+  markUndoPending: () => set({ undoPending: true }),
+
+  markFinishPending: () => set({ finishPending: true }),
 
   markStartPending: () => set({ pendingStart: true }),
 

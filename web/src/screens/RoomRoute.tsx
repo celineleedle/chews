@@ -75,7 +75,7 @@ export default function RoomRoute() {
   let body;
   if (status === "lobby") body = <Lobby />;
   else if (status === "swiping") body = <Swipe />;
-  else if (status === "matched" || status === "finished") body = <Result />;
+  else if (status === "finished") body = <Result />;
   else {
     body = (
       <Screen className="items-center justify-center gap-4">

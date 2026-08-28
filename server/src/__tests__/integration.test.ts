@@ -110,13 +110,31 @@ describe("end-to-end room flow over real websockets", () => {
     ben.send({ type: "swipe", placeId: target, liked: true });
     cal.send({ type: "swipe", placeId: target, liked: true });
     const [matchedA, matchedB, matchedC] = await Promise.all([
-      ana.waitFor("matched"),
-      ben.waitFor("matched"),
-      cal.waitFor("matched"),
+      ana.waitFor("match_found"),
+      ben.waitFor("match_found"),
+      cal.waitFor("match_found"),
     ]);
-    expect(matchedA.winner.placeId).toBe(target);
-    expect(matchedB.winner.placeId).toBe(target);
-    expect(matchedC.winner.placeId).toBe(target);
+    expect(matchedA.matches.map((r) => r.placeId)).toEqual([target]);
+    expect(matchedB.matches.map((r) => r.placeId)).toEqual([target]);
+    expect(matchedC.matches.map((r) => r.placeId)).toEqual([target]);
+
+    // The session keeps going after the match; the host can end it early.
+    const next = deckA.deck[1]!.placeId;
+    ben.send({ type: "swipe", placeId: next, liked: true });
+    await ben.waitFor("progress");
+
+    ben.send({ type: "finish_now" });
+    expect((await ben.waitFor("error")).code).toBe("NOT_HOST");
+
+    ana.send({ type: "finish_now" });
+    const [finishedA, finishedB, finishedC] = await Promise.all([
+      ana.waitFor("finished"),
+      ben.waitFor("finished"),
+      cal.waitFor("finished"),
+    ]);
+    expect(finishedA.matches.map((r) => r.placeId)).toEqual([target]);
+    expect(finishedB.ranked.map((r) => r.restaurant.placeId)).toEqual([next]);
+    expect(finishedC.matches).toHaveLength(1);
 
     for (const c of [ana, ben, cal]) c.ws.close();
   });
@@ -138,6 +156,13 @@ describe("end-to-end room flow over real websockets", () => {
     host.send({ type: "start_session" });
     const { deck } = await pal.waitFor("session_started");
 
+    pal.send({ type: "swipe", placeId: deck[0]!.placeId, liked: true });
+    await pal.waitFor("progress");
+
+    // Undo round-trip: targeted confirmation, then re-swipe to restore progress.
+    pal.send({ type: "undo_swipe", placeId: deck[0]!.placeId });
+    const undone = await pal.waitFor("swipe_undone");
+    expect(undone).toMatchObject({ placeId: deck[0]!.placeId, progressIndex: 0 });
     pal.send({ type: "swipe", placeId: deck[0]!.placeId, liked: true });
     await pal.waitFor("progress");
     pal.ws.terminate();

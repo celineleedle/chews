@@ -3,7 +3,7 @@ import {
   DEFAULT_FILTERS,
   type ErrorCode,
   type Filters,
-  type MatchResult,
+  type SessionResult,
   type MemberInfo,
   type Restaurant,
   type RoomSnapshot,
@@ -35,6 +35,8 @@ interface Member {
   graceTimer: ReturnType<typeof setTimeout> | null;
   /** placeIds this member has voted on — dedupes swipes and doubles as progress. */
   swiped: Set<string>;
+  /** The one swipe that can be taken back; cleared by undo (one step only). */
+  lastSwipe: { placeId: string; liked: boolean } | null;
 }
 
 export type JoinResult =
@@ -65,7 +67,10 @@ export class Room {
   private active = new Set<string>();
   private likes: VoteMap = new Map();
   private passes: VoteMap = new Map();
-  private result: MatchResult | null = null;
+  /** Unanimous matches in the order they happened; ids mirror it for lookups. */
+  private matches: Restaurant[] = [];
+  private matchedIds = new Set<string>();
+  private result: SessionResult | null = null;
 
   private emptySince: number | null = Date.now();
   private terminalAt: number | null = null;
@@ -116,6 +121,7 @@ export class Room {
       socket: null,
       graceTimer: null,
       swiped: new Set(),
+      lastSwipe: null,
     };
     this.members.set(member.id, member);
     this.emptySince = null;
@@ -236,9 +242,13 @@ export class Room {
     this.deckIds = new Set(this.deck.map((r) => r.placeId));
     this.likes = new Map();
     this.passes = new Map();
+    this.matches = [];
+    this.matchedIds = new Set();
+    this.result = null;
     this.active = new Set(this.members.keys());
     for (const member of this.members.values()) {
       member.swiped = new Set();
+      member.lastSwipe = null;
     }
     this.status = "swiping";
     this.starting = false;
@@ -253,6 +263,17 @@ export class Room {
 
   // -- swiping --------------------------------------------------------------
 
+  /** Host-only early exit: jump to results once at least one match exists. */
+  finishNow(memberId: string): { code: ErrorCode; message: string } | null {
+    if (memberId !== this.hostId) return { code: "NOT_HOST", message: "Only the host can end the session." };
+    if (this.status !== "swiping") return { code: "BAD_STATE", message: "The session isn't active." };
+    if (this.matches.length === 0) {
+      return { code: "BAD_STATE", message: "Finish now unlocks after the first match." };
+    }
+    this.finish();
+    return null;
+  }
+
   swipe(memberId: string, placeId: string, liked: boolean) {
     if (this.status !== "swiping") return;
     const member = this.members.get(memberId);
@@ -260,6 +281,7 @@ export class Room {
     if (!this.deckIds.has(placeId) || member.swiped.has(placeId)) return;
 
     member.swiped.add(placeId);
+    member.lastSwipe = { placeId, liked };
     const votes = liked ? this.likes : this.passes;
     let set = votes.get(placeId);
     if (!set) votes.set(placeId, (set = new Set()));
@@ -269,35 +291,75 @@ export class Room {
     this.evaluate();
   }
 
+  /**
+   * Take back the member's single most recent swipe. Server-confirmed: the
+   * client only moves its deck on the targeted `swipe_undone` frame. A card
+   * that already matched is protected — matches are permanent.
+   */
+  undoSwipe(memberId: string, placeId: string): { code: ErrorCode; message: string } | null {
+    if (this.status !== "swiping") return { code: "BAD_STATE", message: "The session isn't active." };
+    const member = this.members.get(memberId);
+    if (!member || !this.active.has(memberId)) {
+      return { code: "BAD_STATE", message: "You're not part of this session." };
+    }
+    const last = member.lastSwipe;
+    if (!last || last.placeId !== placeId) {
+      return { code: "BAD_STATE", message: "Nothing to take back." };
+    }
+    if (this.matchedIds.has(placeId)) {
+      return { code: "BAD_STATE", message: "That one's already a match — keep swiping instead." };
+    }
+
+    const votes = last.liked ? this.likes : this.passes;
+    const set = votes.get(placeId);
+    if (set) {
+      set.delete(memberId);
+      if (set.size === 0) votes.delete(placeId);
+    }
+    member.swiped.delete(placeId);
+    member.lastSwipe = null;
+
+    this.sendTo(member, { type: "swipe_undone", placeId, progressIndex: member.swiped.size });
+    this.broadcastProgress();
+    return null;
+  }
+
   /** Derived, not stored: the deck is fixed while swiping and `swiped` only grows. */
   private deckDone(member: Member): boolean {
     return this.deck.length > 0 && member.swiped.size >= this.deck.length;
   }
 
+  /**
+   * A match no longer ends the session: record it, tell everyone, and keep
+   * checking deck exhaustion in the same pass — a final swipe can both
+   * complete a match and finish the session.
+   */
   private evaluate() {
     if (this.status !== "swiping") return;
-    const winnerId = checkUnanimous(this.likes, this.active);
-    if (winnerId) {
-      const winner = this.deck.find((r) => r.placeId === winnerId)!;
-      const ranked = rankResults(this.deck, this.likes, this.passes).filter(
-        (r) => r.restaurant.placeId !== winnerId,
-      );
-      this.result = { kind: "matched", winner, ranked };
-      this.status = "matched";
-      this.terminalAt = Date.now();
-      this.broadcast({ type: "matched", winner, ranked });
-      return;
+    const newIds = checkUnanimous(this.likes, this.active, this.matchedIds);
+    if (newIds.length > 0) {
+      const idSet = new Set(newIds);
+      // Deck order within one event keeps multi-match announcements deterministic.
+      const newMatches = this.deck.filter((r) => idSet.has(r.placeId));
+      for (const id of newIds) this.matchedIds.add(id);
+      this.matches.push(...newMatches);
+      this.broadcast({ type: "match_found", matches: newMatches });
     }
     if (allDone(this.active, (id) => {
       const member = this.members.get(id);
       return member ? this.deckDone(member) : false;
     })) {
-      const ranked = rankResults(this.deck, this.likes, this.passes);
-      this.result = { kind: "finished", winner: null, ranked };
-      this.status = "finished";
-      this.terminalAt = Date.now();
-      this.broadcast({ type: "finished", ranked });
+      this.finish();
     }
+  }
+
+  /** Ends the session — the only path to `finished` (exhaustion or finish-now). */
+  private finish() {
+    const ranked = rankResults(this.deck, this.likes, this.passes, this.matchedIds);
+    this.result = { matches: this.matches, ranked };
+    this.status = "finished";
+    this.terminalAt = Date.now();
+    this.broadcast({ type: "finished", matches: this.matches, ranked });
   }
 
   // -- state out ------------------------------------------------------------
@@ -313,8 +375,19 @@ export class Room {
       deck: this.status === "lobby" ? null : this.deck,
       progressIndex: member?.swiped.size ?? 0,
       progress: this.progressCounts(),
+      matches: this.matches,
+      canUndo: this.canUndo(member),
       result: this.result,
     };
+  }
+
+  /** Whether the member's most recent swipe is currently take-backable. */
+  private canUndo(member: Member | undefined): boolean {
+    return (
+      this.status === "swiping" &&
+      member?.lastSwipe != null &&
+      !this.matchedIds.has(member.lastSwipe.placeId)
+    );
   }
 
   private memberInfos(): MemberInfo[] {
@@ -381,8 +454,12 @@ export class Room {
 
   // -- lifecycle ------------------------------------------------------------
 
+  /**
+   * Only `finished` is terminal — a live match keeps the session (and the
+   * disconnect grace timer, and the room-GC clock) running.
+   */
   isTerminal(): boolean {
-    return this.status === "matched" || this.status === "finished";
+    return this.status === "finished";
   }
 
   /** The join policy, for pre-checks (REST) — `join()` still enforces it. */
