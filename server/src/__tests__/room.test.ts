@@ -203,13 +203,12 @@ describe("Room", () => {
 
   it("a final swipe can complete a match and finish the session in one pass", async () => {
     const room = makeRoom([restaurant("a")]);
-    const room1 = room;
-    const host = joinAs(room1, "Host");
-    const pal = joinAs(room1, "Pal");
-    await startAs(room1, host.memberId);
+    const host = joinAs(room, "Host");
+    const pal = joinAs(room, "Pal");
+    await startAs(room, host.memberId);
 
-    room1.swipe(host.memberId, "a", true);
-    room1.swipe(pal.memberId, "a", true);
+    room.swipe(host.memberId, "a", true);
+    room.swipe(pal.memberId, "a", true);
     expect(pal.socket.last("match_found")!.matches.map((r) => r.placeId)).toEqual(["a"]);
     const finished = pal.socket.last("finished")!;
     expect(finished.matches.map((r) => r.placeId)).toEqual(["a"]);
