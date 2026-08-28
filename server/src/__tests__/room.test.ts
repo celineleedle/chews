@@ -114,7 +114,7 @@ describe("Room", () => {
     expect(pal.socket.last("room_update")!.hostId).toBe(pal.memberId);
   });
 
-  it("fires a unanimous match and excludes the winner from ranked runner-ups", async () => {
+  it("announces a unanimous match to everyone and keeps the session swiping", async () => {
     const room = makeRoom();
     const host = joinAs(room, "Host");
     const pal = joinAs(room, "Pal");
@@ -123,13 +123,97 @@ describe("Room", () => {
     room.swipe(host.memberId, "a", true);
     room.swipe(host.memberId, "b", true);
     room.swipe(pal.memberId, "b", false);
-    expect(pal.socket.last("matched")).toBeUndefined();
+    expect(pal.socket.last("match_found")).toBeUndefined();
 
     room.swipe(pal.memberId, "a", true);
-    const matched = pal.socket.last("matched")!;
-    expect(matched.winner.placeId).toBe("a");
-    expect(matched.ranked.map((r) => r.restaurant.placeId)).toEqual(["b"]);
-    expect(host.socket.last("matched")).toBeDefined();
+    const found = pal.socket.last("match_found")!;
+    expect(found.matches.map((r) => r.placeId)).toEqual(["a"]);
+    expect(host.socket.last("match_found")).toBeDefined();
+
+    // Not terminal: swiping continues, and the match lands in final results.
+    expect(room.getStatus()).toBe("swiping");
+    room.swipe(host.memberId, "c", false);
+    room.swipe(pal.memberId, "c", true);
+    const finished = pal.socket.last("finished")!;
+    expect(finished.matches.map((r) => r.placeId)).toEqual(["a"]);
+    // Matched card excluded from ranked; b and c tie on counts so order is deck order.
+    expect(finished.ranked.map((r) => r.restaurant.placeId).sort()).toEqual(["b", "c"]);
+  });
+
+  it("a resume snapshot mid-session carries the accumulated matches", async () => {
+    const room = makeRoom();
+    const host = joinAs(room, "Host");
+    const pal = joinAs(room, "Pal");
+    const token = pal.socket.last("joined")!.resumeToken;
+    await startAs(room, host.memberId);
+
+    room.swipe(host.memberId, "a", true);
+    room.swipe(pal.memberId, "a", true);
+    room.handleDisconnect(pal.memberId, pal.socket);
+
+    const rejoin = new FakeSocket();
+    room.join(rejoin, { clientId: pal.clientId, resumeToken: token });
+    const snapshot = rejoin.last("joined")!.room;
+    expect(snapshot.status).toBe("swiping");
+    expect(snapshot.matches.map((r) => r.placeId)).toEqual(["a"]);
+  });
+
+  it("a match no longer skips the disconnect grace timer or starts the GC clock", async () => {
+    const room = makeRoom();
+    const host = joinAs(room, "Host");
+    const pal = joinAs(room, "Pal");
+    const tri = joinAs(room, "Tri");
+    await startAs(room, host.memberId);
+
+    room.swipe(host.memberId, "a", true);
+    room.swipe(pal.memberId, "a", true);
+    room.swipe(tri.memberId, "a", true);
+    expect(host.socket.last("match_found")).toBeDefined();
+    expect(room.getStatus()).toBe("swiping");
+    // Live session: no terminal TTL ticking (would expire at +30min if it were).
+    expect(room.isExpired(Date.now() + 31 * 60_000)).toBe(false);
+
+    // Disconnecting mid-session still gets the grace period, then removal.
+    room.handleDisconnect(tri.memberId, tri.socket);
+    expect(host.socket.last("room_update")!.members.find((m) => m.id === tri.memberId)!.connected).toBe(false);
+    vi.advanceTimersByTime(DISCONNECT_GRACE_MS);
+    expect(host.socket.last("room_update")!.members.map((m) => m.id)).not.toContain(tri.memberId);
+  });
+
+  it("one departure can complete several matches at once, announced in deck order", async () => {
+    const room = makeRoom();
+    const host = joinAs(room, "Host");
+    const pal = joinAs(room, "Pal");
+    const tri = joinAs(room, "Tri");
+    await startAs(room, host.memberId);
+
+    // host and pal both like b then a; tri blocks both.
+    room.swipe(host.memberId, "b", true);
+    room.swipe(host.memberId, "a", true);
+    room.swipe(pal.memberId, "b", true);
+    room.swipe(pal.memberId, "a", true);
+    expect(host.socket.last("match_found")).toBeUndefined();
+
+    room.leave(tri.memberId);
+    const found = host.socket.last("match_found")!;
+    const deckOrder = host.socket.last("session_started")!.deck.map((r) => r.placeId);
+    const expected = deckOrder.filter((id) => id === "a" || id === "b");
+    expect(found.matches.map((r) => r.placeId)).toEqual(expected);
+  });
+
+  it("a final swipe can complete a match and finish the session in one pass", async () => {
+    const room = makeRoom([restaurant("a")]);
+    const room1 = room;
+    const host = joinAs(room1, "Host");
+    const pal = joinAs(room1, "Pal");
+    await startAs(room1, host.memberId);
+
+    room1.swipe(host.memberId, "a", true);
+    room1.swipe(pal.memberId, "a", true);
+    expect(pal.socket.last("match_found")!.matches.map((r) => r.placeId)).toEqual(["a"]);
+    const finished = pal.socket.last("finished")!;
+    expect(finished.matches.map((r) => r.placeId)).toEqual(["a"]);
+    expect(finished.ranked).toEqual([]);
   });
 
   it("ignores duplicate swipes on the same place", async () => {
@@ -141,7 +225,7 @@ describe("Room", () => {
     room.swipe(host.memberId, "a", true);
     room.swipe(host.memberId, "a", true);
     // pal has NOT liked "a" — a duplicate like from host must not fake unanimity
-    expect(host.socket.last("matched")).toBeUndefined();
+    expect(host.socket.last("match_found")).toBeUndefined();
     expect(host.socket.last("joined")).toBeDefined();
   });
 
@@ -154,13 +238,13 @@ describe("Room", () => {
 
     room.swipe(host.memberId, "a", true);
     room.swipe(pal.memberId, "a", true);
-    expect(host.socket.last("matched")).toBeUndefined();
+    expect(host.socket.last("match_found")).toBeUndefined();
 
     room.handleDisconnect(third.memberId, third.socket);
-    expect(host.socket.last("matched")).toBeUndefined();
+    expect(host.socket.last("match_found")).toBeUndefined();
 
     vi.advanceTimersByTime(DISCONNECT_GRACE_MS);
-    expect(host.socket.last("matched")!.winner.placeId).toBe("a");
+    expect(host.socket.last("match_found")!.matches.map((r) => r.placeId)).toEqual(["a"]);
   });
 
   it("finishes with ranked results when the deck is exhausted without unanimity", async () => {
@@ -182,6 +266,7 @@ describe("Room", () => {
 
     // no unanimity; b: 2 likes, c: 1 like + 2 passes, a: no likes (dropped)
     const finished = pal.socket.last("finished")!;
+    expect(finished.matches).toEqual([]);
     expect(finished.ranked.map((r) => r.restaurant.placeId)).toEqual(["b", "c"]);
   });
 
@@ -193,10 +278,12 @@ describe("Room", () => {
     room.leave(pal.memberId);
 
     room.swipe(host.memberId, "a", true);
-    expect(host.socket.last("matched")).toBeUndefined();
+    expect(host.socket.last("match_found")).toBeUndefined();
     room.swipe(host.memberId, "b", false);
     room.swipe(host.memberId, "c", false);
-    expect(host.socket.last("finished")!.ranked.map((r) => r.restaurant.placeId)).toEqual(["a"]);
+    const finished = host.socket.last("finished")!;
+    expect(finished.matches).toEqual([]);
+    expect(finished.ranked.map((r) => r.restaurant.placeId)).toEqual(["a"]);
   });
 
   it("expires when empty, after terminal TTL, and at max age", async () => {

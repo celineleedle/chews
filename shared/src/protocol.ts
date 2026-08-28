@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type {
   Filters,
-  MatchResult,
+  SessionResult,
   MemberInfo,
   PlaceReview,
   RankedResult,
@@ -39,6 +39,11 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
     placeId: z.string().min(1).max(300),
     liked: z.boolean(),
   }),
+  z.object({
+    type: z.literal("undo_swipe"),
+    placeId: z.string().min(1).max(300),
+  }),
+  z.object({ type: z.literal("finish_now") }),
   z.object({ type: z.literal("leave") }),
 ]);
 
@@ -69,14 +74,17 @@ export type ServerMessage =
       progress: { doneCount: number; totalCount: number };
     }
   | { type: "progress"; doneCount: number; totalCount: number }
-  | { type: "matched"; winner: Restaurant; ranked: RankedResult[] }
-  | { type: "finished"; ranked: RankedResult[] }
+  /** One or more cards just went unanimous; the session keeps going. */
+  | { type: "match_found"; matches: Restaurant[] }
+  | { type: "finished"; matches: Restaurant[]; ranked: RankedResult[] }
+  /** Targeted to one member: their last swipe was taken back. */
+  | { type: "swipe_undone"; placeId: string; progressIndex: number }
   /** fatal: joining again would just repeat the error — don't reconnect. */
   | { type: "error"; code: ErrorCode; message: string; fatal: boolean };
 
 export type {
   Filters,
-  MatchResult,
+  SessionResult,
   MemberInfo,
   PlaceReview,
   RankedResult,

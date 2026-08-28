@@ -110,13 +110,13 @@ describe("end-to-end room flow over real websockets", () => {
     ben.send({ type: "swipe", placeId: target, liked: true });
     cal.send({ type: "swipe", placeId: target, liked: true });
     const [matchedA, matchedB, matchedC] = await Promise.all([
-      ana.waitFor("matched"),
-      ben.waitFor("matched"),
-      cal.waitFor("matched"),
+      ana.waitFor("match_found"),
+      ben.waitFor("match_found"),
+      cal.waitFor("match_found"),
     ]);
-    expect(matchedA.winner.placeId).toBe(target);
-    expect(matchedB.winner.placeId).toBe(target);
-    expect(matchedC.winner.placeId).toBe(target);
+    expect(matchedA.matches.map((r) => r.placeId)).toEqual([target]);
+    expect(matchedB.matches.map((r) => r.placeId)).toEqual([target]);
+    expect(matchedC.matches.map((r) => r.placeId)).toEqual([target]);
 
     for (const c of [ana, ben, cal]) c.ws.close();
   });

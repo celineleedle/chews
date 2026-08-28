@@ -1,4 +1,4 @@
-export type RoomStatus = "lobby" | "swiping" | "matched" | "finished";
+export type RoomStatus = "lobby" | "swiping" | "finished";
 
 export interface Restaurant {
   placeId: string;
@@ -77,10 +77,11 @@ export interface RankedResult {
   passCount: number;
 }
 
-export type MatchResult =
-  | { kind: "matched"; winner: Restaurant; ranked: RankedResult[] }
-  /** The deck ran out without a unanimous winner */
-  | { kind: "finished"; winner: null; ranked: RankedResult[] };
+/** Final results: every unanimous match in occurrence order, plus the ranked rest. */
+export interface SessionResult {
+  matches: Restaurant[];
+  ranked: RankedResult[];
+}
 
 export interface RoomSnapshot {
   code: string;
@@ -93,7 +94,12 @@ export interface RoomSnapshot {
   /** The receiving member's own position in the deck */
   progressIndex: number;
   progress: { doneCount: number; totalCount: number };
-  result: MatchResult | null;
+  /** Unanimous matches so far, in the order they happened. */
+  matches: Restaurant[];
+  /** Whether the receiving member's most recent swipe can be taken back. */
+  canUndo: boolean;
+  /** Present once the session has finished. */
+  result: SessionResult | null;
 }
 
 export const DEFAULT_FILTERS: Filters = {

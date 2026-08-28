@@ -3,7 +3,7 @@ import {
   DEFAULT_FILTERS,
   type ErrorCode,
   type Filters,
-  type MatchResult,
+  type SessionResult,
   type MemberInfo,
   type Restaurant,
   type RoomSnapshot,
@@ -65,7 +65,10 @@ export class Room {
   private active = new Set<string>();
   private likes: VoteMap = new Map();
   private passes: VoteMap = new Map();
-  private result: MatchResult | null = null;
+  /** Unanimous matches in the order they happened; ids mirror it for lookups. */
+  private matches: Restaurant[] = [];
+  private matchedIds = new Set<string>();
+  private result: SessionResult | null = null;
 
   private emptySince: number | null = Date.now();
   private terminalAt: number | null = null;
@@ -236,6 +239,9 @@ export class Room {
     this.deckIds = new Set(this.deck.map((r) => r.placeId));
     this.likes = new Map();
     this.passes = new Map();
+    this.matches = [];
+    this.matchedIds = new Set();
+    this.result = null;
     this.active = new Set(this.members.keys());
     for (const member of this.members.values()) {
       member.swiped = new Set();
@@ -274,30 +280,37 @@ export class Room {
     return this.deck.length > 0 && member.swiped.size >= this.deck.length;
   }
 
+  /**
+   * A match no longer ends the session: record it, tell everyone, and keep
+   * checking deck exhaustion in the same pass — a final swipe can both
+   * complete a match and finish the session.
+   */
   private evaluate() {
     if (this.status !== "swiping") return;
-    const winnerId = checkUnanimous(this.likes, this.active);
-    if (winnerId) {
-      const winner = this.deck.find((r) => r.placeId === winnerId)!;
-      const ranked = rankResults(this.deck, this.likes, this.passes).filter(
-        (r) => r.restaurant.placeId !== winnerId,
-      );
-      this.result = { kind: "matched", winner, ranked };
-      this.status = "matched";
-      this.terminalAt = Date.now();
-      this.broadcast({ type: "matched", winner, ranked });
-      return;
+    const newIds = checkUnanimous(this.likes, this.active, this.matchedIds);
+    if (newIds.length > 0) {
+      const idSet = new Set(newIds);
+      // Deck order within one event keeps multi-match announcements deterministic.
+      const newMatches = this.deck.filter((r) => idSet.has(r.placeId));
+      for (const id of newIds) this.matchedIds.add(id);
+      this.matches.push(...newMatches);
+      this.broadcast({ type: "match_found", matches: newMatches });
     }
     if (allDone(this.active, (id) => {
       const member = this.members.get(id);
       return member ? this.deckDone(member) : false;
     })) {
-      const ranked = rankResults(this.deck, this.likes, this.passes);
-      this.result = { kind: "finished", winner: null, ranked };
-      this.status = "finished";
-      this.terminalAt = Date.now();
-      this.broadcast({ type: "finished", ranked });
+      this.finish();
     }
+  }
+
+  /** Ends the session — the only path to `finished` (exhaustion or finish-now). */
+  private finish() {
+    const ranked = rankResults(this.deck, this.likes, this.passes, this.matchedIds);
+    this.result = { matches: this.matches, ranked };
+    this.status = "finished";
+    this.terminalAt = Date.now();
+    this.broadcast({ type: "finished", matches: this.matches, ranked });
   }
 
   // -- state out ------------------------------------------------------------
@@ -313,8 +326,15 @@ export class Room {
       deck: this.status === "lobby" ? null : this.deck,
       progressIndex: member?.swiped.size ?? 0,
       progress: this.progressCounts(),
+      matches: this.matches,
+      canUndo: this.canUndo(member),
       result: this.result,
     };
+  }
+
+  /** Always false until the undo unit lands — the last-swipe record arrives with it. */
+  private canUndo(_member: Member | undefined): boolean {
+    return false;
   }
 
   private memberInfos(): MemberInfo[] {
@@ -381,8 +401,12 @@ export class Room {
 
   // -- lifecycle ------------------------------------------------------------
 
+  /**
+   * Only `finished` is terminal — a live match keeps the session (and the
+   * disconnect grace timer, and the room-GC clock) running.
+   */
   isTerminal(): boolean {
-    return this.status === "matched" || this.status === "finished";
+    return this.status === "finished";
   }
 
   /** The join policy, for pre-checks (REST) — `join()` still enforces it. */
