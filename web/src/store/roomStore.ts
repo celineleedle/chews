@@ -34,6 +34,7 @@ interface RoomStore {
   handleServerMessage: (msg: ServerMessage) => void;
   recordLocalSwipe: () => void;
   markStartPending: () => void;
+  clearStartPending: () => void;
   showToast: (text: string) => void;
   reset: () => void;
 }
@@ -120,6 +121,8 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   recordLocalSwipe: () => set((s) => ({ progressIndex: s.progressIndex + 1 })),
 
   markStartPending: () => set({ pendingStart: true }),
+
+  clearStartPending: () => set({ pendingStart: false }),
 
   showToast: (text) => {
     if (toastTimer) clearTimeout(toastTimer);

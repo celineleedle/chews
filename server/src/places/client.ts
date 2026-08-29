@@ -254,7 +254,14 @@ export async function placesDeck(filters: Filters): Promise<Restaurant[]> {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(8000),
     });
-  } catch {
+  } catch (err) {
+    const reason =
+      err instanceof Error && err.name === "TimeoutError"
+        ? "timed out after 8s"
+        : err instanceof Error
+          ? `${err.name}: ${err.message}`
+          : String(err);
+    console.error(`[places] search request failed (${reason})`);
     throw new Error("Couldn't reach the restaurant search — check your connection and try again.");
   }
 
