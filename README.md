@@ -74,3 +74,9 @@ All configuration is server-side env (see `.env.example`); the web client needs 
 | `GOOGLE_PLACES_API_KEY` | _(empty)_ | Places API (New) + Maps Static key; empty ⇒ mock data |
 | `MOCK_PLACES` | `0` | `1` forces the mock deck even with a key |
 | `PLACES_CACHE_TTL_MIN` | `45` | search-result cache TTL |
+
+## AI Disclosure
+
+This project was built with assistance from [Claude Code](https://claude.com/claude-code).
+The concept, architecture, and product decisions are mine; Claude wrote the code and
+documentation. All changes have been tested and reviewed by me before committing.
