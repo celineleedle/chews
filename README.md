@@ -79,4 +79,4 @@ All configuration is server-side env (see `.env.example`); the web client needs 
 
 This project was built with assistance from [Claude Code](https://claude.com/claude-code).
 The concept, architecture, and product decisions are mine; Claude wrote the code and
-documentation. All changes have been tested and reviewed by me before committing.
+documentation. All changes are tested and reviewed by me before being committed.
